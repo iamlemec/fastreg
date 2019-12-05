@@ -1,12 +1,12 @@
 import numpy as np
 import pandas as pd
-from scipy.stats.distributions import norm
 import scipy.sparse as sp
+from scipy.stats.distributions import norm
 import tensorflow as tf
 import tensorflow.keras as keras
+import tensorflow.keras.layers as layers
 
 from .design import design_matrices
-from .tools import inv
 
 ##
 ## tensorflow tools
@@ -75,7 +75,7 @@ def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params'
         if link == 'identity':
             link = tf.identity
         else:
-            link = getattr(K, link)
+            link = getattr(keras.backend, link)
     if type(loss) is str:
         loss = getattr(keras.losses, loss)
 
@@ -137,7 +137,7 @@ def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params'
     # calculate standard errors
     if dlink is not None and dloss is not None:
         # compute link gradient
-        y_hat = model.predict(x_data).flatten()
+        y_hat = model.predict(x_data, batch_size=batch_size).flatten()
         dlink_vec = dlink(y_hat)
         dloss_vec = dloss(y_vec, y_hat)
         dpred_vec = dlink_vec*dloss_vec
@@ -147,9 +147,9 @@ def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params'
             dlike_dense = x_mat*dpred_vec[:,None]
             dlike_sparse = fe_mat.multiply(dpred_vec[:,None])
             dlike00 = dlike_dense.T.dot(dlike_dense)
-            dlike11 = dlike_sparse.T.dot(dlike_sparse).todense()
-            dlike01 = dlike_sparse.T.dot(dlike_dense).todense()
-            dlike10 = dlike01.T
+            dlike11 = dlike_sparse.T.dot(dlike_sparse).toarray()
+            dlike10 = dlike_sparse.T.dot(dlike_dense)
+            dlike01 = dlike10.T
             dlike = np.block([[dlike00, dlike01], [dlike10, dlike11]])
         elif x_mat is not None and fe_mat is None:
             dlike_dense = dpred_vec[:,None]*x_mat
@@ -159,7 +159,7 @@ def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params'
             dlike = dlike_sparse.T.dot(dlike_sparse)
 
         # get cov matrix
-        cov = inv(dlike)
+        cov = np.linalg.inv(dlike)
         stderr = np.sqrt(cov.diagonal())
 
         # confidence interval
