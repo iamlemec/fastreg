@@ -6,6 +6,7 @@ import numpy as np
 import scipy.sparse as sp
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 from itertools import product
+
 from .tools import chainer, vstack, strides, swizzle
 
 def frame_eval(exp, data, engine='pandas'):

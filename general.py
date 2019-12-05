@@ -1,3 +1,13 @@
+import numpy as np
+import pandas as pd
+from scipy.stats.distributions import norm
+import scipy.sparse as sp
+import tensorflow as tf
+import tensorflow.keras as keras
+
+from .design import design_matrices
+from .tools import inv
+
 ##
 ## tensorflow tools
 ##
@@ -15,15 +25,13 @@ class SparseLayer(layers.Layer):
         super().__init__()
         self.vocabulary_size = vocabulary_size
         self.num_units = num_units
-        self.activation = tf.keras.activations.get(activation)
+        self.activation = keras.activations.get(activation)
         self.use_bias = use_bias
 
     def build(self, input_shape):
-        self.kernel = self.add_weight(
-            "kernel", shape=[self.vocabulary_size, self.num_units]
-        )
+        self.kernel = self.add_weight('kernel', shape=[self.vocabulary_size, self.num_units])
         if self.use_bias:
-            self.bias = self.add_weight("bias", shape=[self.num_units])
+            self.bias = self.add_weight('bias', shape=[self.num_units])
 
     def call(self, inputs, **kwargs):
         is_sparse = isinstance(inputs, tf.SparseTensor)
@@ -55,6 +63,9 @@ dloss_default = {
 
 # glm regression using keras
 def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params', link='identity', loss='mse', batch_size=4092, epochs=3, learning_rate=0.5, metrics=['accuracy'], dlink=None, dloss=None):
+    if len(x) == 0 and len(fe) == 0 and not intercept:
+        raise(Exception('No columns present!'))
+
     if type(link) in (None, str):
         dlink = dlink_default.get(link, None)
     if type(loss) is str:
@@ -120,27 +131,57 @@ def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params'
 
     # construct params
     names = sum(names, [])
-    betas = tf.concat([tf.reshape(act.weights[0], (-1,)) for act in linear], 0)
-    coeff = pd.Series(dict(zip(names, betas.numpy())))
-
-    # generate predictions
-    # y_hat = model.predict(x_data).flatten()
+    betas = np.concat([act.weights[0].numpy().flatten() for act in linear])
+    table = pd.DataFrame({'coeff': betas}, index=names)
 
     # calculate standard errors
-    # if dlink is not None and dloss is not None:
-    #     dlink_vec = dlink(y_hat)
-    #     dloss_vec = dloss(y_vec, y_hat)
-    #     dpred_vec = dlink_vec*dloss_vec
-    #     dlike_dense = dpred_vec[:,None]*x_mat
-    #     fisher_dense = np.matmul(dlike_dense.T, dlike_dense)
-    #     dlike_sparse = fe_mat.multiply(dpred_vec[:, None])
-    #     fisher_sparse = (dlike_sparse.T*dlike_sparse)
+    if dlink is not None and dloss is not None:
+        # compute link gradient
+        y_hat = model.predict(x_data).flatten()
+        dlink_vec = dlink(y_hat)
+        dloss_vec = dloss(y_vec, y_hat)
+        dpred_vec = dlink_vec*dloss_vec
+
+        # get fisher matrix
+        if x_mat is not None and fe_mat is not None:
+            dlike_dense = x_mat*dpred_vec[:,None]
+            dlike_sparse = fe_mat.multiply(dpred_vec[:,None])
+            dlike00 = dlike_dense.T.dot(dlike_dense)
+            dlike11 = dlike_sparse.T.dot(dlike_sparse).todense()
+            dlike01 = dlike_sparse.T.dot(dlike_dense).todense()
+            dlike10 = dlike01.T
+            dlike = np.block([[dlike00, dlike01], [dlike10, dlike11]])
+        elif x_mat is not None and fe_mat is None:
+            dlike_dense = dpred_vec[:,None]*x_mat
+            dlike = dlike_dense.T.dot(dlike_dense)
+        elif x_mat is None and fe_mat is not None:
+            dlike_sparse = fe_mat.multiply(dpred_vec[:,None])
+            dlike = dlike_sparse.T.dot(dlike_sparse)
+
+        # get cov matrix
+        cov = inv(dlike)
+        stderr = np.sqrt(cov.diagonal())
+
+        # confidence interval
+        s95 = norm.ppf(0.975)
+        low95 = betas - s95*stderr
+        high95 = betas + s95*stderr
+
+        # p-value
+        zscore = betas/stderr
+        pvalue = 1 - norm.cdf(np.abs(zscore))
+
+        # store for return
+        table['stderr'] = stderr
+        table['low95'] = low95
+        table['high95'] = high95
+        table['pvalue'] = pvalue
 
     # return
     if output == 'params':
-        return coeff
+        return table
     elif output == 'model':
-        return model, coeff
+        return model, table
 
 # standard poisson regression
 def poisson(y, x=[], fe=[], data=None, **kwargs):

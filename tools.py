@@ -26,3 +26,11 @@ def chainer(v):
 
 def negate(f):
     return lambda *x, **kwargs: -f(*x, **kwargs)
+
+def spmul(x, y):
+    if sp.issparse(x):
+        return x.multiply(y)
+    elif sp.issparse(y):
+        return y.multiply(x)
+    else:
+        return np.multiply(x, y)

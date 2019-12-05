@@ -4,8 +4,9 @@
 
 import numpy as np
 import pandas as pd
-from  scipy.stats.distributions import norm
+from scipy.stats.distributions import norm
 import scipy.sparse as sp
+
 from .design import design_matrices
 
 ## high dimensional fixed effects
