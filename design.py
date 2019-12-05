@@ -5,9 +5,34 @@
 import numpy as np
 import scipy.sparse as sp
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
-from itertools import product
+from itertools import product, chain
 
-from .tools import chainer, vstack, strides, swizzle
+##
+## tools
+##
+
+def vstack(v, N=None):
+    if len(v) == 0:
+        return np.array([[]]).reshape((0, N))
+    else:
+        return np.vstack(v)
+
+# this assumes row major to align with product
+def strides(v):
+    if len(v) == 1:
+        return np.array([1])
+    else:
+        return np.r_[1, np.cumprod(v[1:])][::-1]
+
+def swizzle(ks, vs):
+    return ','.join([f'{k}={v}' for k, v in zip(ks, vs)])
+
+def chainer(v):
+    return list(chain.from_iterable(v))
+
+##
+## design
+##
 
 def frame_eval(exp, data, engine='pandas'):
     if engine == 'pandas':
