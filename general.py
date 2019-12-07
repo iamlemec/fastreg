@@ -71,7 +71,7 @@ dloss_default = {
 }
 
 # glm regression using keras
-def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params', link='identity', loss='mse', batch_size=4092, epochs=3, learning_rate=0.5, metrics=['accuracy'], dlink=None, dloss=None):
+def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params', link='identity', loss='mse', batch_size=4092, epochs=3, learning_rate=0.5, valfrac=0.0, metrics=['accuracy'], dlink=None, dloss=None):
     if len(x) == 0 and len(fe) == 0 and not intercept:
         raise(Exception('No columns present!'))
 
@@ -110,7 +110,7 @@ def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params'
     # run estimation
     optim = keras.optimizers.Adagrad(learning_rate=learning_rate)
     model.compile(loss=loss, optimizer=optim, metrics=metrics)
-    model.fit(x_ten, y_vec, epochs=epochs, batch_size=batch_size)
+    model.fit(x_ten, y_vec, epochs=epochs, batch_size=batch_size, validation_split=valfrac)
 
     # construct params
     betas = linear.weights[0].numpy().flatten()
