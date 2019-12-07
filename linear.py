@@ -13,6 +13,9 @@ from .design import design_matrices
 # x expects strings or expressions
 # fe can have strings or tuples of strings
 def ols(y, x=[], fe=[], data=None, intercept=True, drop='first'):
+    if len(x) == 0 and len(fe) == 0 and not intercept:
+        raise(Exception('No columns present!'))
+
     # make design matrices
     y_vec, x_mat, x_names = design_matrices(y, x, fe, data, intercept=intercept, drop=drop)
     N, K = x_mat.shape

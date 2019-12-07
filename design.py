@@ -11,11 +11,23 @@ from itertools import product, chain
 ## tools
 ##
 
-def vstack(v, N=None):
+# handles empty data
+def vstack(v):
     if len(v) == 0:
-        return np.array([[]]).reshape((0, N))
+        return None
     else:
         return np.vstack(v)
+
+# allows None's and handles empty data
+def hstack(v):
+    v = [x for x in v if x is not None]
+    if len(v) == 0:
+        return None
+    if any([sp.issparse(x) for x in v]):
+        agg = lambda z: sp.hstack(z, format='csr')
+    else:
+        agg = np.hstack
+    return agg(v)
 
 # this assumes row major to align with product
 def strides(v):
@@ -40,17 +52,17 @@ def frame_eval(exp, data, engine='pandas'):
     elif engine == 'python':
         return eval(exp, globals(), data).values
 
-def frame_matrix(x, data, N=None):
-    return vstack([frame_eval(z, data) for z in x], N).T
+def frame_matrix(terms, data):
+    return vstack([frame_eval(z, data) for z in terms]).T
 
-def sparse_categorical(terms, data, N=None, drop='first'):
+def sparse_categorical(terms, data, drop='first'):
     if len(terms) == 0:
-        return sp.csr_matrix((N, 0)), []
+        return None, []
 
     # generate map between terms and features
     terms = [(z,) if type(z) is str else z for z in terms]
     feats = chainer(terms)
-    feat_mat = frame_matrix(feats, data, N=N)
+    feat_mat = frame_matrix(feats, data)
     term_map = [[feats.index(z) for z in t] for t in terms]
 
     # ordinally encode fixed effects
@@ -89,27 +101,13 @@ def sparse_categorical(terms, data, N=None, drop='first'):
 
     return final_spmat, final_names
 
-def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', separate=False, N=None):
+def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=None):
     # construct individual matrices
-    if len(x) > 0:
-        x_mat, x_names = frame_matrix(x, data, N=N), x.copy()
-    else:
-        x_mat, x_names = None, []
-    if len(fe) > 0:
-        fe_mat, fe_names = sparse_categorical(fe, data, drop=drop, N=N)
-    else:
-        fe_mat, fe_names = None, []
+    x_mat, x_names = frame_matrix(x, data), x
+    fe_mat, fe_names = sparse_categorical(fe, data, drop=drop)
 
-    # try to infer N
-    if N is None:
-        if x_mat is not None:
-            N, _ = x_mat.shape
-        elif fe_mat is not None:
-            N, _ = fe_mat.shape
-
-    # we should know N by now
-    if N is None:
-        raise(Exception('Must specify N if no data'))
+    # get data length
+    N = len(data)
 
     # optionally add intercept
     if intercept:
@@ -117,23 +115,28 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', separate
         x_mat = np.hstack([inter, x_mat]) if x_mat is not None else inter
         x_names = ['intercept'] + x_names
 
-    # if sparse/dense separate we're done
-    if separate:
+    # if separate we're done
+    if output == 'separate':
         return x_mat, fe_mat, x_names, fe_names
-    else:
-        if x_mat is not None and fe_mat is not None:
-            mat = sp.hstack([x_mat, fe_mat], format='csr')
-        elif x_mat is not None and fe_mat is None:
-            mat = x_mat
-        elif x_mat is None and fe_spmat is not None:
-            mat = fe_mat
-        else:
-            mat = np.empty((N, 0))
-        names = x_names + fe_names
+
+    # merge dense and sparse
+    names = x_names + fe_names
+    mat = hstack([x_mat, fe_mat])
+
+    # just return if null
+    if mat is None:
         return mat, names
 
-def design_matrices(y, x=[], fe=[], data=None, intercept=True, drop='first', separate=False):
+    # handle conversions
+    if output == 'sparse' and not sp.issparse(mat):
+        mat = sp.csr_matrix(mat)
+    if output == 'dense' and sp.issparse(mat):
+        mat = mat.toarray()
+
+    # return results
+    return mat, names
+
+def design_matrices(y, x=[], fe=[], data=None, intercept=True, drop='first', output=None):
     y_vec = frame_eval(y, data)
-    N = len(y_vec)
-    x_ret = design_matrix(x, fe, data, N=N, intercept=intercept, drop=drop, separate=separate)
+    x_ret = design_matrix(x, fe, data, intercept=intercept, drop=drop, output=output)
     return (y_vec,) + x_ret

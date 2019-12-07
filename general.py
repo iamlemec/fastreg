@@ -12,6 +12,15 @@ from .design import design_matrices
 ## tensorflow tools
 ##
 
+# general multiply
+def multiply(x, y):
+    if sp.issparse(x):
+        return x.multiply(y)
+    elif sp.issparse(y):
+        return y.multiply(x)
+    else:
+        return x*y
+
 # make a sparse tensor
 def sparse_tensor(inp, dtype=np.float32):
     mat = inp.tocoo().astype(dtype)
@@ -50,7 +59,7 @@ class SparseLayer(layers.Layer):
 
 # default link derivatives
 dlink_default = {
-    None: lambda x: np.ones_like(x),
+    'identity': lambda x: np.ones_like(x),
     'exp': lambda x: x
 }
 
@@ -66,7 +75,7 @@ def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params'
     if len(x) == 0 and len(fe) == 0 and not intercept:
         raise(Exception('No columns present!'))
 
-    if type(link) in (None, str):
+    if type(link) is str:
         dlink = dlink_default.get(link, None)
     if type(loss) is str:
         dloss = dloss_default.get(loss, None)
@@ -80,108 +89,70 @@ def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params'
         loss = getattr(keras.losses, loss)
 
     # construct design matrices
-    y_vec, x_mat, fe_mat, x_names, fe_names = design_matrices(
-        y, x, fe, data, intercept=intercept, drop=drop, separate=True
-    )
-    N = len(y_vec)
+    y_vec, x_mat, x_names = design_matrices(y, x, fe, data, intercept=intercept, drop=drop)
+    N, K = x_mat.shape
 
-    # collect model components
-    x_data = [] # actual data
-    inputs = [] # input placeholders
-    linear = [] # linear layers
-    inter = [] # intermediate values
-    names = [] # coefficient names
+    # construct sparse tensor
+    sparse = sp.issparse(x_mat)
+    if sparse:
+        x_ten = sparse_tensor(x_mat)
+        linear = SparseLayer(K, 1, use_bias=False)
+    else:
+        x_ten = x_mat
+        linear = layers.Dense(1, use_bias=False)
 
-    # check dense factors
-    if x_mat is not None:
-        _, Kd = x_mat.shape
-        inputs_dense = layers.Input((Kd,))
-        linear_dense = layers.Dense(1, use_bias=False)
-        inter_dense = linear_dense(inputs_dense)
-
-        x_data.append(x_mat)
-        inputs.append(inputs_dense)
-        linear.append(linear_dense)
-        inter.append(inter_dense)
-        names.append(x_names)
-
-    # check sparse factors
-    if fe_mat is not None:
-        _, Ks = fe_mat.shape
-        fe_ten = sparse_tensor(fe_mat)
-        inputs_sparse = layers.Input((Ks,), sparse=True)
-        linear_sparse = SparseLayer(Ks, 1, use_bias=False)
-        inter_sparse = linear_sparse(inputs_sparse)
-
-        x_data.append(fe_ten)
-        inputs.append(inputs_sparse)
-        linear.append(linear_sparse)
-        inter.append(inter_sparse)
-        names.append(fe_names)
-
-    # construct network
-    core = layers.Add()(inter) if len(inter) > 1 else inter[0]
-    pred = keras.layers.Lambda(link)(core)
+    # construct model
+    inputs = layers.Input((K,), sparse=sparse)
+    inter = linear(inputs)
+    pred = keras.layers.Lambda(link)(inter)
     model = keras.Model(inputs=inputs, outputs=pred)
 
     # run estimation
     optim = keras.optimizers.Adagrad(learning_rate=learning_rate)
     model.compile(loss=loss, optimizer=optim, metrics=metrics)
-    model.fit(x_data, y_vec, epochs=epochs, batch_size=batch_size)
+    model.fit(x_ten, y_vec, epochs=epochs, batch_size=batch_size)
 
     # construct params
-    names = sum(names, [])
-    betas = np.concat([act.weights[0].numpy().flatten() for act in linear])
-    table = pd.DataFrame({'coeff': betas}, index=names)
+    betas = linear.weights[0].numpy().flatten()
+    table = pd.DataFrame({'coeff': betas}, index=x_names)
 
-    # calculate standard errors
-    if dlink is not None and dloss is not None:
-        # compute link gradient
-        y_hat = model.predict(x_data, batch_size=batch_size).flatten()
-        dlink_vec = dlink(y_hat)
-        dloss_vec = dloss(y_vec, y_hat)
-        dpred_vec = dlink_vec*dloss_vec
-
-        # get fisher matrix
-        if x_mat is not None and fe_mat is not None:
-            dlike_dense = x_mat*dpred_vec[:,None]
-            dlike_sparse = fe_mat.multiply(dpred_vec[:,None])
-            dlike00 = dlike_dense.T.dot(dlike_dense)
-            dlike11 = dlike_sparse.T.dot(dlike_sparse).toarray()
-            dlike10 = dlike_sparse.T.dot(dlike_dense)
-            dlike01 = dlike10.T
-            dlike = np.block([[dlike00, dlike01], [dlike10, dlike11]])
-        elif x_mat is not None and fe_mat is None:
-            dlike_dense = dpred_vec[:,None]*x_mat
-            dlike = dlike_dense.T.dot(dlike_dense)
-        elif x_mat is None and fe_mat is not None:
-            dlike_sparse = fe_mat.multiply(dpred_vec[:,None])
-            dlike = dlike_sparse.T.dot(dlike_sparse)
-
-        # get cov matrix
-        cov = np.linalg.inv(dlike)
-        stderr = np.sqrt(cov.diagonal())
-
-        # confidence interval
-        s95 = norm.ppf(0.975)
-        low95 = betas - s95*stderr
-        high95 = betas + s95*stderr
-
-        # p-value
-        zscore = betas/stderr
-        pvalue = 1 - norm.cdf(np.abs(zscore))
-
-        # store for return
-        table['stderr'] = stderr
-        table['low95'] = low95
-        table['high95'] = high95
-        table['pvalue'] = pvalue
-
-    # return
-    if output == 'params':
+    # only point estimates
+    if dlink is None or dloss is None:
         return table
-    elif output == 'model':
-        return model, table
+
+    # compute link gradient
+    y_hat = model.predict(x_ten, batch_size=batch_size).flatten()
+    dlink_vec = dlink(y_hat)
+    dloss_vec = dloss(y_vec, y_hat)
+    dpred_vec = dlink_vec*dloss_vec
+
+    # get fisher matrix
+    dlike = multiply(x_mat, dpred_vec[:,None])
+    fisher = dlike.T.dot(dlike)
+    if sp.issparse(fisher):
+        fisher = fisher.toarray()
+
+    # get cov matrix
+    cov = np.linalg.inv(fisher)
+    stderr = np.sqrt(cov.diagonal())
+
+    # confidence interval
+    s95 = norm.ppf(0.975)
+    low95 = betas - s95*stderr
+    high95 = betas + s95*stderr
+
+    # p-value
+    zscore = betas/stderr
+    pvalue = 1 - norm.cdf(np.abs(zscore))
+
+    # store for return
+    table['stderr'] = stderr
+    table['low95'] = low95
+    table['high95'] = high95
+    table['pvalue'] = pvalue
+
+    # return all
+    return table
 
 # standard poisson regression
 def poisson(y, x=[], fe=[], data=None, **kwargs):
