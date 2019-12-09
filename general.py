@@ -71,7 +71,7 @@ dloss_default = {
 }
 
 # glm regression using keras
-def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params', link='identity', loss='mse', batch_size=4092, epochs=3, learning_rate=0.5, valfrac=0.0, metrics=['accuracy'], dlink=None, dloss=None):
+def glm_keras(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params', link='identity', loss='mse', batch_size=4092, epochs=3, learning_rate=0.5, valfrac=0.0, metrics=['accuracy'], dlink=None, dloss=None):
     if len(x) == 0 and len(fe) == 0 and not intercept:
         raise(Exception('No columns present!'))
 
@@ -154,8 +154,95 @@ def glm(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params'
     # return all
     return table
 
-# standard poisson regression
-def poisson(y, x=[], fe=[], data=None, **kwargs):
-    return glm(y, x=x, fe=fe, data=data, link='exp', loss='poisson', **kwargs)
+##
+## torch
+##
 
-# try negative binomial next (custom loss)
+import torch
+from torch.utils.data import TensorDataset, DataLoader
+
+# generic GLM model
+class GlmModel(torch.nn.Module):
+    def __init__(self, K, link):
+        super().__init__()
+        self.linear = torch.nn.Linear(K, 1, bias=False)
+        self.link = link
+
+    def forward(self, x):
+        x = self.linear(x)
+        x = self.link(x)
+        return x
+
+# default specification
+link0 = lambda x: x
+loss0 = lambda i, o: torch.pow(i-o, 2)
+dlink0 = lambda x: x
+dloss0 = lambda yh, y: yh - y
+
+# glm regression using torch
+def glm_torch(y, x=[], fe=[], data=None, intercept=True, drop='first', output='params', link_fn=link0, loss_fn=loss0, dlink_fn=None, dloss_fn=None, batch_size=4092, epochs=3, learning_rate=0.5):
+    if len(x) == 0 and len(fe) == 0 and not intercept:
+        raise(Exception('No columns present!'))
+
+    # construct design matrices
+    y_vec, x_mat, x_names = design_matrices(y, x, fe, data, intercept=intercept, drop=drop)
+    N, K = x_mat.shape
+
+    # convert to tensors
+    y_ten = torch.from_numpy(y_vec.astype(np.float32).reshape(-1, 1)).cuda()
+    x_ten = torch.from_numpy(x_mat.astype(np.float32)).cuda()
+
+    # create dataset and dataloader
+    dset = TensorDataset(x_ten, y_ten)
+    dlod = DataLoader(dset, batch_size, shuffle=True)
+
+    # construct model
+    model = GlmModel(K, link_fn).cuda()
+
+    # create optimizer
+    params = [model.linear.weight]
+    optim = torch.optim.SGD(params, lr=learning_rate)
+
+    # do training
+    for ep in range(epochs):
+        # epoch stats
+        agg_loss, agg_batch = 0.0, 0
+
+        # iterate over batches
+        for x_bat, y_bat in dlod:
+            # compute gradients
+            pred = model(x_bat)
+            lvec = loss_fn(pred, y_bat)
+            loss = torch.mean(lvec)
+            loss.backward()
+
+            # implement update
+            optim.step()
+            optim.zero_grad()
+
+            # compute statistics
+            agg_loss += loss
+            agg_batch += 1
+
+        # display stats
+        avg_loss = agg_loss/agg_batch
+        print(f'{ep:3}: loss = {avg_loss}')
+
+    # construct params
+    betas = model.linear.weight.detach().cpu().numpy().flatten()
+    table = pd.DataFrame({'coeff': betas}, index=x_names)
+
+    # return all
+    return table
+
+# standard poisson regression
+def poisson_keras(y, x=[], fe=[], data=None, backend='keras', **kwargs):
+    return glm_keras(y, x=x, fe=fe, data=data, link='exp', loss='poisson', **kwargs)
+
+# standard poisson regression
+def poisson_torch(y, x=[], fe=[], data=None, backend='keras', **kwargs):
+    link = lambda x: torch.exp(x)
+    loss = lambda yh, y: yh - y*torch.log(yh+eps)
+    dlink = lambda x: torch.exp(x)
+    dloss = lambda yh, y: (yh-y)/(yh+eps)
+    return glm_torch(y, x=x, fe=fe, data=data, link_fn=link, loss_fn=loss, **kwargs)
