@@ -184,20 +184,23 @@ def glm_torch(y, x=[], fe=[], data=None, intercept=True, drop='first', output='p
     if len(x) == 0 and len(fe) == 0 and not intercept:
         raise(Exception('No columns present!'))
 
+    # choose best device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     # construct design matrices
     y_vec, x_mat, x_names = design_matrices(y, x, fe, data, intercept=intercept, drop=drop)
     N, K = x_mat.shape
 
     # convert to tensors
-    y_ten = torch.from_numpy(y_vec.astype(np.float32).reshape(-1, 1)).cuda()
-    x_ten = torch.from_numpy(x_mat.astype(np.float32)).cuda()
+    y_ten = torch.from_numpy(y_vec.astype(np.float32).reshape(-1, 1)).to(device)
+    x_ten = torch.from_numpy(x_mat.astype(np.float32)).to(device)
 
     # create dataset and dataloader
     dset = TensorDataset(x_ten, y_ten)
     dlod = DataLoader(dset, batch_size, shuffle=True)
 
     # construct model
-    model = GlmModel(K, link_fn).cuda()
+    model = GlmModel(K, link_fn).to(device)
 
     # create optimizer
     params = [model.linear.weight]
@@ -232,6 +235,47 @@ def glm_torch(y, x=[], fe=[], data=None, intercept=True, drop='first', output='p
     betas = model.linear.weight.detach().cpu().numpy().flatten()
     table = pd.DataFrame({'coeff': betas}, index=x_names)
 
+    # only point estimates
+    if dlink_fn is None or dloss_fn is None:
+        return table
+
+    # compute some grads
+    pred = model(x_bat)
+    lvec = loss_fn(pred, y_bat)
+    loss = torch.mean(lvec)
+    return torch.autograd.grad(loss, pred)
+
+    # compute link gradient
+    y_hat = model(x_ten).detach().numpy().flatten()
+    dlink_vec = dlink_fn(y_hat)
+    dloss_vec = dloss_fn(y_hat, y_vec)
+    dpred_vec = dlink_vec*dloss_vec
+
+    # get fisher matrix
+    dlike = multiply(x_mat, dpred_vec[:,None])
+    fisher = dlike.T.dot(dlike)
+    if sp.issparse(fisher):
+        fisher = fisher.toarray()
+
+    # get cov matrix
+    cov = np.linalg.inv(fisher)
+    stderr = np.sqrt(cov.diagonal())
+
+    # confidence interval
+    s95 = norm.ppf(0.975)
+    low95 = betas - s95*stderr
+    high95 = betas + s95*stderr
+
+    # p-value
+    zscore = betas/stderr
+    pvalue = 1 - norm.cdf(np.abs(zscore))
+
+    # store for return
+    table['stderr'] = stderr
+    table['low95'] = low95
+    table['high95'] = high95
+    table['pvalue'] = pvalue
+
     # return all
     return table
 
@@ -243,6 +287,6 @@ def poisson_keras(y, x=[], fe=[], data=None, backend='keras', **kwargs):
 def poisson_torch(y, x=[], fe=[], data=None, backend='keras', **kwargs):
     link = lambda x: torch.exp(x)
     loss = lambda yh, y: yh - y*torch.log(yh+eps)
-    dlink = lambda x: torch.exp(x)
+    dlink = lambda x: np.exp(x)
     dloss = lambda yh, y: (yh-y)/(yh+eps)
-    return glm_torch(y, x=x, fe=fe, data=data, link_fn=link, loss_fn=loss, **kwargs)
+    return glm_torch(y, x=x, fe=fe, data=data, link_fn=link, loss_fn=loss, dlink_fn=dlink, dloss_fn=dloss, **kwargs)
