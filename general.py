@@ -100,7 +100,7 @@ def glm(y, x, data, link=link0, loss=loss0, params=[], intercept=True, drop='fir
         raise(Exception('No columns present!'))
 
     # construct design matrices
-    y_vec, x_mat, x_names = design_matrices(y, x, data=data, intercept=intercept, drop=drop)
+    y_vec, x_mat, x_names, c_abs = design_matrices(y, x=x, data=data, intercept=intercept, drop=drop)
     N, K = x_mat.shape
 
     # linear layer

@@ -102,25 +102,43 @@ def sparse_categorical(terms, data, drop='first'):
 
     return final_spmat, final_names
 
-# absorb categorical variables
-def absorb_categorical(y, x, categ):
-    N, K = categ.shape
+def absorb_categorical(y, x, abs, method='first'):
+    N, K = x.shape
 
-    # iteratively difference out
-    for c in range(K):
-        vals = pd.Categorical(categ[:, c])
-        group = vals._reverse_indexer()
+    # store original means
+    avg_y0 = np.mean(y)
+    avg_x0 = np.mean(x, axis=0)
+
+    # create class groups
+    vals = pd.Categorical(abs)
+    group = vals._reverse_indexer()
+
+    # perform differencing
+    if method == 'first':
         first = {k: v[0] for k, v in group.items()}
-        idx = np.array([first[x] for x in vals])
+        idx = np.array([first[v] for v in vals])
         y -= y[idx]
         x -= x[idx, :]
+    elif method == 'mean':
+        avg_y = {k: np.mean(y[v]) for k, v in group.items()}
+        sub_y = np.array([avg_y[v] for v in vals])
+        y -= y[sub_y]
+        for i in range(K):
+            avg_x = {k: np.mean(x[v, i]) for k, v in group.items()}
+            sub_x = np.array([avg_y[v] for v in vals])
+            x[:, i] -= sub_x
+
+    # recenter means
+    if method == 'mean':
+        y += avg_y0
+        x += avg_x0[None, :]
 
     return y, x
 
 def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=None):
     # construct individual matrices
     x_mat, x_names = frame_matrix(x, data), x
-    fe_mat, fe_names = sparse_categorical(fe, data, drop=drop)
+    c_mat, c_names = sparse_categorical(fe, data, drop=drop)
 
     # get data length
     N = len(data)
@@ -132,8 +150,8 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
         x_names = ['intercept'] + x_names
 
     # merge dense and sparse
-    names = x_names + fe_names
-    mat = hstack([x_mat, fe_mat])
+    names = x_names + c_names
+    mat = hstack([x_mat, c_mat])
 
     # just return if null
     if mat is None:
@@ -148,18 +166,16 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
     # return results
     return mat, names
 
-def design_matrices(y, x=[], fe=[], ab=[], data=None, intercept=True, drop='first', output=None):
-    # can't use intercept with absorbtion
-    if len(ab) > 0:
-        intercept = False
-
-    # base matrices
+def design_matrices(y, x=[], fe=[], data=None, absorb=None, intercept=True, drop='first', output=None):
     y_vec = frame_eval(y, data)
-    x_mat, x_names = design_matrix(x, fe, data, intercept=intercept, drop=drop, output=output)
 
-    # absorb desired categoricals
-    if len(ab) > 0:
-        x_abs = frame_matrix(ab, data)
-        y_vec, x_mat = absorb_categorical(y_vec, x_mat, x_abs)
+    # use sparsity or absorption
+    if absorb is not None:
+        c_abs = frame_eval(absorb, data)
+        x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=False, output=output)
+        y_vec, x_mat = absorb_categorical(y_vec, x_mat, c_abs)
+    else:
+        c_abs = None
+        x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=intercept, drop=drop, output=output)
 
-    return y_vec, x_mat, x_names
+    return y_vec, x_mat, x_names, c_abs
