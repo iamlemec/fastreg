@@ -172,7 +172,7 @@ def design_matrices(y, x=[], fe=[], data=None, absorb=None, intercept=True, drop
     # use sparsity or absorption
     if absorb is not None:
         c_abs = frame_eval(absorb, data)
-        x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=False, output=output)
+        x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=False, drop=drop, output=output)
         y_vec, x_mat = absorb_categorical(y_vec, x_mat, c_abs)
     else:
         c_abs = None
