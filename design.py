@@ -101,6 +101,21 @@ def sparse_categorical(terms, data, drop='first'):
 
     return final_spmat, final_names
 
+# absorb categorical variables
+def absorb(y, x, categ):
+    N, K = categ.shape
+
+    # iteratively difference out
+    for c in range(K):
+        vals = pd.Categorical(categ[:, c])
+        group = vals._reverse_indexer()
+        first = {k: v[0] for k, v in group.items()}
+        idx = np.array([first[x] for x in vals])
+        y -= y[idx, :]
+        x -= x[idx, :]
+
+    return y, x
+
 def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=None):
     # construct individual matrices
     x_mat, x_names = frame_matrix(x, data), x

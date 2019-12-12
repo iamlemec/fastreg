@@ -4,10 +4,10 @@
 
 import numpy as np
 import pandas as pd
-from scipy.stats.distributions import norm
 import scipy.sparse as sp
 
 from .design import design_matrices
+from .summary import param_table
 
 ## high dimensional fixed effects
 # x expects strings or expressions
@@ -31,29 +31,12 @@ def ols(y, x=[], fe=[], data=None, intercept=True, drop='first'):
     # find point estimates
     xpx = x_mat.T.dot(x_mat)
     xpy = x_mat.T.dot(y_vec)
-    betas = solve(xpx, xpy)
+    beta = solve(xpx, xpy)
 
     # find standard errors
-    y_hat = x_mat.dot(betas)
+    y_hat = x_mat.dot(beta)
     e_hat = y_vec - y_hat
     s2 = np.sum(e_hat**2)/(N-K)
-    cov = s2*inv(xpx)
-    stderr = np.sqrt(cov.diagonal())
+    sigma = s2*inv(xpx)
 
-    # confidence interval
-    s95 = norm.ppf(0.975)
-    low95 = betas - s95*stderr
-    high95 = betas + s95*stderr
-
-    # p-value
-    zscore = betas/stderr
-    pvalue = 1 - norm.cdf(np.abs(zscore))
-
-    # dataframe of results
-    return pd.DataFrame({
-        'coeff': betas,
-        'stderr': stderr,
-        'low95': low95,
-        'high95': high95,
-        'pvalue': pvalue
-    }, index=x_names)
+    return param_table(beta, sigma, x_names)

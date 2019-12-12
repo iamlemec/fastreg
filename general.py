@@ -1,44 +1,18 @@
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
-from scipy.stats.distributions import norm
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 from torch.autograd import grad, Variable
 
 from .design import design_matrices
+from .summary import param_table
 
 ##
 ## constants
 ##
 
 eps = 1e-7
-z95 = norm.ppf(0.975)
-
-##
-## tools
-##
-
-def param_table(beta, sigma, names):
-    # standard errors
-    stderr = np.sqrt(sigma.diagonal())
-
-    # confidence interval
-    low95 = beta - z95*stderr
-    high95 = beta + z95*stderr
-
-    # p-value
-    zscore = beta/stderr
-    pvalue = 1 - norm.cdf(np.abs(zscore))
-
-    # return all
-    return pd.DataFrame({
-        'coeff': beta,
-        'stderr': stderr,
-        'low95': low95,
-        'high95': high95,
-        'pvalue': pvalue
-    }, index=names)
 
 ##
 ## glm with torch
