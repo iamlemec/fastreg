@@ -4,7 +4,7 @@ import scipy.sparse as sp
 from scipy.stats.distributions import norm
 import torch
 from torch.utils.data import TensorDataset, DataLoader
-from torch.autograd import grad
+from torch.autograd import grad, Variable
 
 from .design import design_matrices
 
@@ -13,6 +13,7 @@ from .design import design_matrices
 ##
 
 eps = 1e-7
+z95 = norm.ppf(0.975)
 
 ##
 ## tools
@@ -23,9 +24,8 @@ def param_table(beta, sigma, names):
     stderr = np.sqrt(sigma.diagonal())
 
     # confidence interval
-    s95 = norm.ppf(0.975)
-    low95 = beta - s95*stderr
-    high95 = beta + s95*stderr
+    low95 = beta - z95*stderr
+    high95 = beta + z95*stderr
 
     # p-value
     zscore = beta/stderr
@@ -47,14 +47,21 @@ def param_table(beta, sigma, names):
 def flatgrad(y, x, **kwargs):
     return torch.flatten(grad(y, x, **kwargs)[0])
 
-# looping for hessians
-def hessian(y, x, device=None):
-    dy = flatgrad(y, x, create_graph=True)
-    units = torch.eye(dy.numel(), device=device)
-    rows = [flatgrad(dy, x, grad_outputs=u, retain_graph=True) for u in units]
+def vecgrad(y, x, **kwargs):
+    units = torch.eye(y.numel(), device=y.device)
+    rows = [flatgrad(y, x, grad_outputs=u, retain_graph=True) for u in units]
     return torch.stack(rows)
 
-# maximum likelihood using torch
+# looping for hessians
+def hessian(y, xs):
+    rows = []
+    for xi in xs:
+        dyi = flatgrad(y, xi, create_graph=True)
+        cols = [vecgrad(dyi, xj) for xj in xs]
+        rows.append(torch.cat(cols, 1))
+    return torch.cat(rows, 0)
+
+# maximum likelihood using torch -  this expects a mean log likelihood
 def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, dtype=np.float32, device='cpu'):
     # get data size
     N = len(y)
@@ -94,21 +101,19 @@ def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, d
         print(f'{ep:3}: loss = {avg_loss}')
 
     # construct params (flatified)
-    beta = [p.detach().cpu().numpy().flatten() for p in params]
+    beta = torch.cat([p.flatten() for p in params]).detach().cpu().numpy()
 
-    # get hessian (flatified)
-    K = [p.numel() for p in params]
-    fisher = [np.zeros((s, s)) for s in K]
+    # get hessian (flatified) - but what about off diagonal terms?
+    K = sum([p.numel() for p in params])
+    fisher = np.zeros((K, K))
     for x_bat, y_bat in dlod:
         loss = model(y_bat, x_bat)
-        for i, p in enumerate(params):
-            hess = hessian(loss, p, device=device)
-            fisher[i] += hess.detach().cpu().numpy()
-    for i in range(len(params)):
-        fisher[i] *= batch_size/N
+        hess = hessian(loss, params)
+        fisher += hess.detach().cpu().numpy()
+    fisher *= batch_size/N
 
     # get cov matrix
-    sigma = [np.linalg.inv(f)/N for f in fisher]
+    sigma = np.linalg.inv(fisher)/N
 
     # return all
     return beta, sigma
@@ -128,7 +133,7 @@ def glm(y, x, data, link=link0, loss=loss0, params=[], intercept=True, drop='fir
     linear = torch.nn.Linear(K, 1, bias=False).to(device)
 
     # collect params
-    params = [linear.weight] + params
+    params1 = [linear.weight] + params
 
     # evaluator
     def model(y, x):
@@ -138,13 +143,19 @@ def glm(y, x, data, link=link0, loss=loss0, params=[], intercept=True, drop='fir
         return torch.mean(like)
 
     # estimate model
-    beta, sigma = maxlike(y_vec, x_mat, model, params, device=device, **kwargs)
+    beta, sigma = maxlike(y_vec, x_mat, model, params1, device=device, **kwargs)
 
-    # interpret results
-    if output == 'full':
-        return beta, sigma
-    elif output == 'single':
-        return param_table(beta[0], sigma[0], x_names)
+    # extract linear layer
+    table = param_table(beta[:K], sigma[:K, :K], x_names)
+
+    # return relevant
+    return table, beta, sigma
+
+# logit regression
+def logit(y, x, data, **kwargs):
+    link = lambda x: torch.exp(x)
+    loss = lambda yh, y: torch.log(1+yh) - y*torch.log(yh+eps)
+    return glm(y, x, data, link=link, loss=loss, **kwargs)
 
 # poisson regression
 def poisson(y, x, data, **kwargs):
@@ -152,8 +163,21 @@ def poisson(y, x, data, **kwargs):
     loss = lambda yh, y: yh - y*torch.log(yh+eps)
     return glm(y, x, data, link=link, loss=loss, **kwargs)
 
-# logit regression
-def logit(y, x, data, **kwargs):
+def zero_inflated_poisson(y, x, data, **kwargs):
+    # zero probability
+    spzero = Variable(-2*torch.ones(1), requires_grad=True)
+
+    # base poisson distribution
     link = lambda x: torch.exp(x)
-    loss = lambda yh, y: torch.log(1+yh) - y*torch.log(yh+eps)
-    return glm(y, x, data, link=link, loss=loss, **kwargs)
+    loss0 = lambda yh, y: yh - y*torch.log(yh+eps)
+
+    # zero inflation
+    def loss(yh, y):
+        pzero = torch.sigmoid(spzero)
+        like = pzero*(y==0) + (1-pzero)*torch.exp(-loss0(yh, y))
+        return -torch.log(like)
+
+    return glm(y, x, data, link=link, loss=loss, params=[spzero], **kwargs)
+
+# def negative_binomial(y, x, data, **kwargs):
+# def zero_inflated_negative_binomial(y, x, data, **kwargs):
