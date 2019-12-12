@@ -3,6 +3,7 @@
 ##
 
 import numpy as np
+import pandas as pd
 import scipy.sparse as sp
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 from itertools import product, chain
@@ -102,7 +103,7 @@ def sparse_categorical(terms, data, drop='first'):
     return final_spmat, final_names
 
 # absorb categorical variables
-def absorb(y, x, categ):
+def absorb_categorical(y, x, categ):
     N, K = categ.shape
 
     # iteratively difference out
@@ -111,7 +112,7 @@ def absorb(y, x, categ):
         group = vals._reverse_indexer()
         first = {k: v[0] for k, v in group.items()}
         idx = np.array([first[x] for x in vals])
-        y -= y[idx, :]
+        y -= y[idx]
         x -= x[idx, :]
 
     return y, x
@@ -130,10 +131,6 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
         x_mat = np.hstack([inter, x_mat]) if x_mat is not None else inter
         x_names = ['intercept'] + x_names
 
-    # if separate we're done
-    if output == 'separate':
-        return x_mat, fe_mat, x_names, fe_names
-
     # merge dense and sparse
     names = x_names + fe_names
     mat = hstack([x_mat, fe_mat])
@@ -151,7 +148,18 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
     # return results
     return mat, names
 
-def design_matrices(y, x=[], fe=[], data=None, intercept=True, drop='first', output=None):
+def design_matrices(y, x=[], fe=[], ab=[], data=None, intercept=True, drop='first', output=None):
+    # can't use intercept with absorbtion
+    if len(ab) > 0:
+        intercept = False
+
+    # base matrices
     y_vec = frame_eval(y, data)
-    x_ret = design_matrix(x, fe, data, intercept=intercept, drop=drop, output=output)
-    return (y_vec,) + x_ret
+    x_mat, x_names = design_matrix(x, fe, data, intercept=intercept, drop=drop, output=output)
+
+    # absorb desired categoricals
+    if len(ab) > 0:
+        x_abs = frame_matrix(ab, data)
+        y_vec, x_mat = absorb_categorical(y_vec, x_mat, x_abs)
+
+    return y_vec, x_mat, x_names

@@ -12,12 +12,12 @@ from .summary import param_table
 ## high dimensional fixed effects
 # x expects strings or expressions
 # fe can have strings or tuples of strings
-def ols(y, x=[], fe=[], data=None, intercept=True, drop='first'):
+def ols(y, x=[], fe=[], ab=[], data=None, intercept=True, drop='first'):
     if len(x) == 0 and len(fe) == 0 and not intercept:
         raise(Exception('No columns present!'))
 
     # make design matrices
-    y_vec, x_mat, x_names = design_matrices(y, x, fe, data, intercept=intercept, drop=drop)
+    y_vec, x_mat, x_names = design_matrices(y, x=x, fe=fe, ab=ab, data=data, intercept=intercept, drop=drop)
     N, K = x_mat.shape
 
     # linalg tool select
