@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
+
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 from torch.autograd import grad, Variable
@@ -59,9 +60,8 @@ def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, d
     y_ten = torch.from_numpy(y.astype(dtype)).to(device)
     x_ten = torch.from_numpy(x.astype(dtype)).to(device)
 
-    # create dataset and dataloader
     dset = TensorDataset(x_ten, y_ten)
-    dlod = DataLoader(dset, batch_size, shuffle=True)
+    dlod = DataLoader(dset, batch_size)
 
     # create optimizer
     optim = torch.optim.SGD(params, lr=learning_rate)
@@ -110,12 +110,12 @@ def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, d
 # default specification
 link0 = lambda x: x
 loss0 = lambda i, o: torch.pow(i-o, 2)
-def glm(y, x, data, link=link0, loss=loss0, params=[], intercept=True, drop='first', device='cpu', output='single', **kwargs):
+def glm(y, x=[], fe=[], data=None, link=link0, loss=loss0, params=[], intercept=True, drop='first', device='cpu', **kwargs):
     if len(x) == 0 and len(fe) == 0 and not intercept:
         raise(Exception('No columns present!'))
 
     # construct design matrices
-    y_vec, x_mat, x_names, _ = design_matrices(y, x=x, data=data, intercept=intercept, drop=drop)
+    y_vec, x_mat, x_names = design_matrices(y, x=x, fe=fe, data=data, intercept=intercept, drop=drop, output='dense')
     N, K = x_mat.shape
 
     # linear layer
@@ -141,18 +141,18 @@ def glm(y, x, data, link=link0, loss=loss0, params=[], intercept=True, drop='fir
     return table, beta, sigma
 
 # logit regression
-def logit(y, x, data, **kwargs):
+def logit(y, x=[], fe=[], data=None, **kwargs):
     link = lambda x: torch.exp(x)
     loss = lambda yh, y: torch.log(1+yh) - y*torch.log(yh+eps)
-    return glm(y, x, data, link=link, loss=loss, **kwargs)
+    return glm(y, x=x, fe=fe, data=data, link=link, loss=loss, **kwargs)
 
 # poisson regression
-def poisson(y, x, data, **kwargs):
+def poisson(y, x=[], fe=[], data=None, **kwargs):
     link = lambda x: torch.exp(x)
     loss = lambda yh, y: yh - y*torch.log(yh+eps)
-    return glm(y, x, data, link=link, loss=loss, **kwargs)
+    return glm(y, x=x, fe=fe, data=data, link=link, loss=loss, **kwargs)
 
-def zero_inflated_poisson(y, x, data, **kwargs):
+def zero_inflated_poisson(y, x=[], fe=[], data=None, **kwargs):
     # zero probability
     spzero = Variable(-2*torch.ones(1), requires_grad=True)
 
@@ -166,7 +166,7 @@ def zero_inflated_poisson(y, x, data, **kwargs):
         like = pzero*(y==0) + (1-pzero)*torch.exp(-loss0(yh, y))
         return -torch.log(like)
 
-    return glm(y, x, data, link=link, loss=loss, params=[spzero], **kwargs)
+    return glm(y, x=x, fe=fe, data=data, link=link, loss=loss, params=[spzero], **kwargs)
 
 # def negative_binomial(y, x, data, **kwargs):
 # def zero_inflated_negative_binomial(y, x, data, **kwargs):

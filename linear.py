@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from .design import design_matrices, category_indices
+from .design import design_matrices, category_indices, frame_eval, frame_matrix
 from .summary import param_table
 
 ## high dimensional fixed effects
@@ -17,8 +17,16 @@ def ols(y, x=[], fe=[], data=None, absorb=None, intercept=True, drop='first', ou
         raise(Exception('No columns present!'))
 
     # make design matrices
-    y_vec, x_mat, x_names, c_idx = design_matrices(y, x=x, fe=fe, data=data, absorb=absorb, intercept=intercept, drop=drop)
+    y_vec, x_mat, x_names = design_matrices(y, x=x, fe=fe, data=data, intercept=intercept, drop=drop)
     N, K = x_mat.shape
+
+    # use absorption
+    if absorb is not None:
+        if type(absorb) is str:
+            c_abs = frame_eval(absorb, data)
+        else:
+            c_abs = frame_matrix(absorb, data)
+        y_vec, x_mat, c_idx = absorb_categorical(y_vec, x_mat, c_abs)
 
     # linalg tool select
     if sp.issparse(x_mat):

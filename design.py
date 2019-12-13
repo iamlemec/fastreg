@@ -174,18 +174,7 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
     # return results
     return mat, names
 
-def design_matrices(y, x=[], fe=[], data=None, absorb=None, intercept=True, drop='first', output=None):
+def design_matrices(y, x=[], fe=[], data=None, intercept=True, drop='first', output=None):
     y_vec = frame_eval(y, data)
     x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=intercept, drop=drop, output=output)
-
-    # use sparsity or absorption
-    if absorb is not None:
-        if type(absorb) is str:
-            c_abs = frame_eval(absorb, data)
-        else:
-            c_abs = frame_matrix(absorb, data)
-        y_vec, x_mat, c_idx = absorb_categorical(y_vec, x_mat, c_abs)
-    else:
-        c_idx = None
-
-    return y_vec, x_mat, x_names, c_idx
+    return y_vec, x_mat, x_names
