@@ -15,7 +15,18 @@ from .summary import param_table
 eps = 1e-7
 
 ##
-## glm with torch
+## sparse
+##
+
+# make a sparse tensor
+def sparse_tensor(inp):
+    mat = inp.tocoo()
+    idx = torch.LongTensor(np.vstack([mat.row, mat.col]))
+    val = torch.FloatTensor(mat.data)
+    return torch.sparse.FloatTensor(idx, val, mat.shape)
+
+##
+## derivates
 ##
 
 def flatgrad(y, x, **kwargs):
@@ -34,6 +45,10 @@ def hessian(y, xs):
         cols = [vecgrad(dyi, xj) for xj in xs]
         rows.append(torch.cat(cols, 1))
     return torch.cat(rows, 0)
+
+##
+## estimation
+##
 
 # maximum likelihood using torch -  this expects a mean log likelihood
 def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, dtype=np.float32, device='cpu'):
@@ -100,7 +115,7 @@ def glm(y, x, data, link=link0, loss=loss0, params=[], intercept=True, drop='fir
         raise(Exception('No columns present!'))
 
     # construct design matrices
-    y_vec, x_mat, x_names, c_abs = design_matrices(y, x=x, data=data, intercept=intercept, drop=drop)
+    y_vec, x_mat, x_names, _ = design_matrices(y, x=x, data=data, intercept=intercept, drop=drop)
     N, K = x_mat.shape
 
     # linear layer

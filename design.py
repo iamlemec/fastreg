@@ -102,7 +102,19 @@ def sparse_categorical(terms, data, drop='first'):
 
     return final_spmat, final_names
 
-def absorb_categorical(y, x, abs, method='first'):
+##
+## absorption
+##
+
+def category_indices(cats):
+    if cats.ndim == 1:
+        vals = pd.Categorical(cats)
+    else:
+        vals = pd.Categorical(zip(*cats.T))
+    group = vals._reverse_indexer()
+    return vals, group
+
+def absorb_categorical(y, x, abs):
     N, K = x.shape
 
     # store original means
@@ -110,30 +122,26 @@ def absorb_categorical(y, x, abs, method='first'):
     avg_x0 = np.mean(x, axis=0)
 
     # create class groups
-    vals = pd.Categorical(abs)
-    group = vals._reverse_indexer()
+    vals, group = category_indices(abs)
 
     # perform differencing
-    if method == 'first':
-        first = {k: v[0] for k, v in group.items()}
-        idx = np.array([first[v] for v in vals])
-        y -= y[idx]
-        x -= x[idx, :]
-    elif method == 'mean':
-        avg_y = {k: np.mean(y[v]) for k, v in group.items()}
-        sub_y = np.array([avg_y[v] for v in vals])
-        y -= y[sub_y]
-        for i in range(K):
-            avg_x = {k: np.mean(x[v, i]) for k, v in group.items()}
-            sub_x = np.array([avg_y[v] for v in vals])
-            x[:, i] -= sub_x
+    avg_y = {k: np.mean(y[v]) for k, v in group.items()}
+    sub_y = np.array([avg_y[v] for v in vals])
+    y -= sub_y
+    for i in range(K):
+        avg_x = {k: np.mean(x[v, i]) for k, v in group.items()}
+        sub_x = np.array([avg_x[v] for v in vals])
+        x[:, i] -= sub_x
 
     # recenter means
-    if method == 'mean':
-        y += avg_y0
-        x += avg_x0[None, :]
+    y += avg_y0
+    x += avg_x0[None, :]
 
-    return y, x
+    return y, x, group
+
+##
+## design interface
+##
 
 def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=None):
     # construct individual matrices
@@ -168,14 +176,16 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
 
 def design_matrices(y, x=[], fe=[], data=None, absorb=None, intercept=True, drop='first', output=None):
     y_vec = frame_eval(y, data)
+    x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=intercept, drop=drop, output=output)
 
     # use sparsity or absorption
     if absorb is not None:
-        c_abs = frame_eval(absorb, data)
-        x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=False, drop=drop, output=output)
-        y_vec, x_mat = absorb_categorical(y_vec, x_mat, c_abs)
+        if type(absorb) is str:
+            c_abs = frame_eval(absorb, data)
+        else:
+            c_abs = frame_matrix(absorb, data)
+        y_vec, x_mat, c_idx = absorb_categorical(y_vec, x_mat, c_abs)
     else:
-        c_abs = None
-        x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=intercept, drop=drop, output=output)
+        c_idx = None
 
-    return y_vec, x_mat, x_names, c_abs
+    return y_vec, x_mat, x_names, c_idx
