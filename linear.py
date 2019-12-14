@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from .design import design_matrices, frame_eval, frame_matrix, absorb_categorical
+from .design import design_matrices, frame_eval, frame_matrix, absorb_categorical, category_indices
 from .summary import param_table
 
 ## high dimensional fixed effects
@@ -22,12 +22,8 @@ def ols(y, x=[], fe=[], data=None, absorb=None, cluster=None, intercept=True, dr
 
     # use absorption
     if absorb is not None:
-        if cluster is None:
-            cluster = absorb
-        if type(absorb) is str:
-            c_abs = frame_eval(absorb, data)
-        else:
-            c_abs = frame_matrix(absorb, data)
+        cluster = absorb
+        c_abs = frame_matrix(absorb, data)
         y_vec, x_mat, c_idx = absorb_categorical(y_vec, x_mat, c_abs)
 
     # linalg tool select
@@ -53,14 +49,20 @@ def ols(y, x=[], fe=[], data=None, absorb=None, cluster=None, intercept=True, dr
 
     # find standard errors
     ixpx = inv(xpx)
-    if cluster not in (None, False):
+    if cluster is not None:
+        # if we haven't already calculated for absorb
+        if absorb is None:
+            cluster = frame_matrix(cluster, data)
+            _, c_idx = category_indices(cluster)
+
+        # from cameron and miller
         xe2 = np.zeros((K, K))
-        for v, sel in c_idx.items():
-            xei = np.dot(x_mat[sel, :].T, e_hat[sel, None])
-            xe2 += np.dot(xei, xei.T)
+        for sel in c_idx:
+            xei = x_mat[sel, :].T.dot(e_hat[sel])
+            xe2 += np.outer(xei, xei)
         sigma = np.dot(np.dot(ixpx, xe2), ixpx)
     else:
-        s2 = np.sum(e_hat**2)/(N-K)
+        s2 = np.dot(e_hat, e_hat)/(N-K)
         sigma = s2*ixpx
 
     if output == 'table':

@@ -54,6 +54,8 @@ def frame_eval(exp, data, engine='pandas'):
         return eval(exp, globals(), data).values
 
 def frame_matrix(terms, data):
+    if type(terms) is str:
+        terms = [terms]
     return vstack([frame_eval(z, data) for z in terms]).T
 
 def sparse_categorical(terms, data, drop='first'):
@@ -106,13 +108,15 @@ def sparse_categorical(terms, data, drop='first'):
 ## absorption
 ##
 
+# returns forward and backward mapping
 def category_indices(cats):
+    cats = cats.squeeze()
     if cats.ndim == 1:
         vals = pd.Categorical(cats)
     else:
         vals = pd.Categorical(zip(*cats.T))
     group = vals._reverse_indexer()
-    return vals, group
+    return vals.codes, list(group.values())
 
 def absorb_categorical(y, x, abs):
     N, K = x.shape
@@ -122,22 +126,21 @@ def absorb_categorical(y, x, abs):
     avg_x0 = np.mean(x, axis=0)
 
     # create class groups
-    vals, group = category_indices(abs)
+    codes, groups = category_indices(abs)
 
-    # perform differencing
-    avg_y = {k: np.mean(y[v]) for k, v in group.items()}
-    sub_y = np.array([avg_y[v] for v in vals])
-    y -= sub_y
-    for i in range(K):
-        avg_x = {k: np.mean(x[v, i]) for k, v in group.items()}
-        sub_x = np.array([avg_x[v] for v in vals])
-        x[:, i] -= sub_x
+    # perform differencing on y
+    avg_y = np.array([np.mean(y[i]) for i in groups])
+    y -= avg_y[codes]
+
+    # perform differencing on x
+    avg_x = np.vstack([np.mean(x[i, :], axis=0) for i in groups])
+    x -= avg_x[codes, :]
 
     # recenter means
     y += avg_y0
     x += avg_x0[None, :]
 
-    return y, x, group
+    return y, x, groups
 
 ##
 ## design interface
