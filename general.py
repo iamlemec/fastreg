@@ -52,13 +52,14 @@ def hessian(y, xs):
 ##
 
 # maximum likelihood using torch -  this expects a mean log likelihood
-def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, dtype=np.float32, device='cpu'):
+# can only handle dense x (sparse hessian balks)
+def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, dtype=np.float32, device='cpu', output=None):
     # get data size
     N = len(y)
 
     # convert to tensors
-    y_ten = torch.from_numpy(y.astype(dtype)).to(device)
-    x_ten = torch.from_numpy(x.astype(dtype)).to(device)
+    y_ten = torch.tensor(y, dtype=dtype, device=device)
+    x_ten = torch.tensor(x, dtype=dtype, device=device)
 
     dset = TensorDataset(x_ten, y_ten)
     dlod = DataLoader(dset, batch_size)
@@ -92,6 +93,10 @@ def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, d
     # construct params (flatified)
     beta = torch.cat([p.flatten() for p in params]).detach().cpu().numpy()
 
+    # just params
+    if output == 'beta':
+        return beta
+
     # get hessian (flatified) - but what about off diagonal terms?
     K = sum([p.numel() for p in params])
     fisher = np.zeros((K, K))
@@ -107,10 +112,11 @@ def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, d
     # return all
     return beta, sigma
 
-# default specification
+# default glm specification
 link0 = lambda x: x
 loss0 = lambda i, o: torch.pow(i-o, 2)
-def glm(y, x=[], fe=[], data=None, link=link0, loss=loss0, params=[], intercept=True, drop='first', device='cpu', **kwargs):
+
+def glm(y, x=[], fe=[], data=None, link=link0, loss=loss0, params=[], intercept=True, drop='first', dtype=torch.float, device='cpu', output=None, **kwargs):
     if len(x) == 0 and len(fe) == 0 and not intercept:
         raise(Exception('No columns present!'))
 
@@ -119,7 +125,7 @@ def glm(y, x=[], fe=[], data=None, link=link0, loss=loss0, params=[], intercept=
     N, K = x_mat.shape
 
     # linear layer
-    linear = torch.nn.Linear(K, 1, bias=False).to(device)
+    linear = torch.nn.Linear(K, 1, bias=False).to(dtype=dtype, device=device)
 
     # collect params
     params1 = [linear.weight] + params
@@ -132,13 +138,16 @@ def glm(y, x=[], fe=[], data=None, link=link0, loss=loss0, params=[], intercept=
         return torch.mean(like)
 
     # estimate model
-    beta, sigma = maxlike(y_vec, x_mat, model, params1, device=device, **kwargs)
+    beta, sigma = maxlike(y_vec, x_mat, model, params1, dtype=dtype, device=device, **kwargs)
 
     # extract linear layer
     table = param_table(beta[:K], sigma[:K, :K], x_names)
 
     # return relevant
-    return table, beta, sigma
+    if output == 'table':
+        return table
+    else:
+        return table, beta, sigma
 
 # logit regression
 def logit(y, x=[], fe=[], data=None, **kwargs):

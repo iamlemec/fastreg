@@ -6,13 +6,13 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from .design import design_matrices, category_indices, frame_eval, frame_matrix
+from .design import design_matrices, frame_eval, frame_matrix, absorb_categorical
 from .summary import param_table
 
 ## high dimensional fixed effects
 # x expects strings or expressions
 # fe can have strings or tuples of strings
-def ols(y, x=[], fe=[], data=None, absorb=None, intercept=True, drop='first', output='table'):
+def ols(y, x=[], fe=[], data=None, absorb=None, cluster=None, intercept=True, drop='first', output='table'):
     if len(x) == 0 and len(fe) == 0 and not intercept:
         raise(Exception('No columns present!'))
 
@@ -22,6 +22,8 @@ def ols(y, x=[], fe=[], data=None, absorb=None, intercept=True, drop='first', ou
 
     # use absorption
     if absorb is not None:
+        if cluster is None:
+            cluster = absorb
         if type(absorb) is str:
             c_abs = frame_eval(absorb, data)
         else:
@@ -51,7 +53,7 @@ def ols(y, x=[], fe=[], data=None, absorb=None, intercept=True, drop='first', ou
 
     # find standard errors
     ixpx = inv(xpx)
-    if absorb is not None:
+    if cluster not in (None, False):
         xe2 = np.zeros((K, K))
         for v, sel in c_idx.items():
             xei = np.dot(x_mat[sel, :].T, e_hat[sel, None])
