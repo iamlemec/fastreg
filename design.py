@@ -158,7 +158,7 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
     if intercept:
         inter = np.ones((N, 1))
         x_mat = np.hstack([inter, x_mat]) if x_mat is not None else inter
-        x_names = ['intercept'] + x_names
+        x_names = ['one'] + x_names
 
     # merge dense and sparse
     names = x_names + c_names
