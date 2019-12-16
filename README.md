@@ -6,7 +6,16 @@ Fast sparse regressions. Good for high-dimensional fixed effects.
 
 ### Install
 
-To run the OLS routines, you'll just need `numpy`, `pandas`, `scipy`, and `sklearn`. Optionally, for the maximum likelihood routines, you'll need `jax` (and `jaxlib`) as well. See [here](https://github.com/google/jax) for detailed instructions.
+To install directly from GitHub, just run:
+```
+pip install git+https://github.com/iamlemec/fastreg
+```
+Alternatively, you can clone this repository locally and run
+```
+pip install -e .
+```
+
+Optionally, for the maximum likelihood routines, you'll need `jax` (and `jaxlib`) as well. See [here](https://github.com/google/jax) for detailed instructions.
 
 ### Usage
 
