@@ -1,7 +1,6 @@
 from jax import jit, grad, jacobian, hessian
-import jax.numpy as np
-import jax.random as random
 from jax.scipy.special import gammaln
+import jax.numpy as np
 import numpy as np0
 import scipy.sparse as sp
 
