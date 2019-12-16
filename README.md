@@ -8,17 +8,17 @@ See `benchmark.ipynb` for complete examples.
 
 Regress `y` on `x1` and `x2` given `pandas` DataFrame `data`:
 ```
-linear.ols('y', ['x1', 'x2'], data)
+linear.ols(y='y', x=['x1', 'x2'], data=data)
 ```
 
 Regress `y` on `x1`, `x2`, categorical `id1`, and categorical `id2`:
 ```
-linear.ols('y', ['x1', 'x2'], ['id1', 'id2'], data)
+linear.ols(y='y', x=['x1', 'x2'], fe=['id1', 'id2'], data=data)
 ```
 
 Regress `y` on `x1`, `x2`, categorical `id1`, and all combinations of categoricals `id2` and `id3`:
 ```
-linear.ols('y', ['x1', 'x2'], ['id1', ('id2', 'id3')], data)
+linear.ols(y='y', x=['x1', 'x2'], fe=['id1', ('id2', 'id3')], data=data)
 ```
 
 For poisson regressions, the syntax is the same, but use `general.poisson`. Generalized linear models provided with `general.glm` and maximum likelihood with `general.maxlike`.

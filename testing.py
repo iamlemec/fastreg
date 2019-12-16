@@ -20,9 +20,9 @@ c = {
 # poisson dampening
 pfact = 100
 
-def dataset(N=1_000_000, K1=10, K2=100, state=89320432):
+def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
     # init random
-    st = np.random.RandomState(state)
+    st = np.random.RandomState(seed)
 
     # core regressors
     df = pd.DataFrame({
