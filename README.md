@@ -2,7 +2,7 @@
 
 Fast sparse regressions. Good for high-dimensional fixed effects.
 
-**Also**: experimental work on doing maximum likelihood estimation with JAX (see `general.py`).
+**Also**: experimental work on doing maximum likelihood estimation and generalized linear models with JAX (see `general.py`).
 
 ### Install
 
