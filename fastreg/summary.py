@@ -26,7 +26,7 @@ def param_table(beta, sigma, names):
 
     # p-value
     zscore = beta/stderr
-    pvalue = 1 - norm.cdf(np.abs(zscore))
+    pvalue = 2*(1-norm.cdf(np.abs(zscore)))
 
     # return all
     return pd.DataFrame({
