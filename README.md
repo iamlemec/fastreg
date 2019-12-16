@@ -4,6 +4,10 @@ Fast sparse regressions. Good for high-dimensional fixed effects.
 
 **Also**: experimental work on doing maximum likelihood estimation with JAX (see `general.py`).
 
+### Install
+
+To run the OLS routines, you'll just need `numpy`, `pandas`, `scipy`, and `sklearn`. Optionally, for the maximum likelihood routines, you'll need `jax` (and `jaxlib`) as well. See [here](https://github.com/google/jax) for detailed instructions.
+
 ### Usage
 
 Regress `y` on `x1` and `x2` given `pandas` DataFrame `data`:

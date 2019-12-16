@@ -1,15 +1,10 @@
 import numpy as np
 import pandas as pd
-
-import fastreg.linear as frl
-import fastreg.general as frg
-import fastreg.gentorch as frt
-
 import matplotlib.pyplot as plt
 
 # true parameters
 c = {
-    '1': 0.0,
+    'one': 0.0,
     'x1': 0.6,
     'x2': 0.2,
     'id1': 0.2,
@@ -34,7 +29,7 @@ def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
     })
 
     # predictors
-    df['yhat0'] = c['1'] + c['x1']*df['x1'] + c['x2']*df['x2']
+    df['yhat0'] = c['one'] + c['x1']*df['x1'] + c['x2']*df['x2']
     df['yhat'] = df['yhat0'] + c['id1']*df['id1']/pfact + c['id2']*df['id2']/pfact
 
     # ols outcomes
@@ -79,7 +74,9 @@ def plot_coeff(beta):
     fig.show()
 
 def test_ols(data, y='y', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
-    table = frl.ols(y=y, x=x, fe=fe, data=data, **kwargs)
+    import linear
+
+    table = linear.ols(y=y, x=x, fe=fe, data=data, **kwargs)
 
     if plot:
         plot_coeff(table['coeff'].filter(regex='id2'))
@@ -87,8 +84,10 @@ def test_ols(data, y='y', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwarg
     return table
 
 def test_jax(data, estim='poisson', y='p', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
+    import general
+
     if type(estim) is str:
-        estim = getattr(frg, estim)
+        estim = getattr(general, estim)
 
     table = estim(y=y, x=x, fe=fe, data=data, **kwargs)
 
@@ -98,8 +97,10 @@ def test_jax(data, estim='poisson', y='p', x=['x1', 'x2'], fe=['id1', 'id2'], pl
     return table
 
 def test_torch(data, estim='poisson', y='p', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
+    import gentorch
+
     if type(estim) is str:
-        estim = getattr(frt, estim)
+        estim = getattr(gentorch, estim)
 
     table = estim(y=y, x=x, fe=fe, data=data, **kwargs)
 
