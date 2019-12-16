@@ -34,7 +34,8 @@ def ols(y, x=[], fe=[], data=None, absorb=None, cluster=None, intercept=True, dr
     # find point estimates
     xpx = x_mat.T.dot(x_mat)
     xpy = x_mat.T.dot(y_vec)
-    beta = solve(xpx, xpy)
+    ixpx = inv(xpx)
+    beta = ixpx.dot(xpy)
 
     # just the betas
     if output == 'beta':
@@ -45,7 +46,7 @@ def ols(y, x=[], fe=[], data=None, absorb=None, cluster=None, intercept=True, dr
     e_hat = y_vec - y_hat
 
     # find standard errors
-    ixpx = inv(xpx)
+
     if cluster is not None:
         # if we haven't already calculated for absorb
         if absorb is None:
