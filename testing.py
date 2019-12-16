@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 import fastreg.linear as frl
-import fastreg.genjax as frx
+import fastreg.general as frg
 import fastreg.gentorch as frt
 
 import matplotlib.pyplot as plt
@@ -88,7 +88,7 @@ def test_ols(data, y='y', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwarg
 
 def test_jax(data, estim='poisson', y='p', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
     if type(estim) is str:
-        estim = getattr(frx, estim)
+        estim = getattr(frg, estim)
 
     table = estim(y=y, x=x, fe=fe, data=data, **kwargs)
 
