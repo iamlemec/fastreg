@@ -46,7 +46,6 @@ def ols(y, x=[], fe=[], data=None, absorb=None, cluster=None, intercept=True, dr
     e_hat = y_vec - y_hat
 
     # find standard errors
-
     if cluster is not None:
         # if we haven't already calculated for absorb
         if absorb is None:
