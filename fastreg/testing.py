@@ -74,7 +74,7 @@ def plot_coeff(beta):
     fig.show()
 
 def test_ols(data, y='y', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
-    import linear
+    from . import linear
 
     table = linear.ols(y=y, x=x, fe=fe, data=data, **kwargs)
 
@@ -84,7 +84,7 @@ def test_ols(data, y='y', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwarg
     return table
 
 def test_jax(data, estim='poisson', y='p', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
-    import general
+    from . import general
 
     if type(estim) is str:
         estim = getattr(general, estim)
@@ -97,7 +97,7 @@ def test_jax(data, estim='poisson', y='p', x=['x1', 'x2'], fe=['id1', 'id2'], pl
     return table
 
 def test_torch(data, estim='poisson', y='p', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
-    import gentorch
+    from . import gentorch
 
     if type(estim) is str:
         estim = getattr(gentorch, estim)
