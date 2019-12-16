@@ -87,8 +87,8 @@ def maxlike(y, x, model, params0, batch_size=4092, epochs=3, learning_rate=0.5, 
             diff = g_fun(params, y_bat, x_bat)
 
             # compute step
-            step = learning_rate*diff
-            params -= step
+            step = -learning_rate*diff
+            params += step
 
             # error
             gain = np.dot(step, diff)
