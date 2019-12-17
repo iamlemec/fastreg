@@ -44,6 +44,17 @@ def chainer(v):
     return list(chain.from_iterable(v))
 
 ##
+## R style formulas
+##
+
+# will fail on complex expressions with spaces, as in: y ~ a + log(b + c)
+def parse_formula(form):
+    left, right = form.split(' ~ ')
+    y = left.strip()
+    x = [s.strip() for s in right.split(' + ')]
+    return y, x
+
+##
 ## design
 ##
 
@@ -177,7 +188,9 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
     # return results
     return mat, names
 
-def design_matrices(y, x=[], fe=[], data=None, intercept=True, drop='first', output=None):
+def design_matrices(y, x=[], fe=[], formula=None, data=None, intercept=True, drop='first', output=None):
+    if formula is not None:
+        y, x = parse_formula(formula)
     y_vec = frame_eval(y, data)
     x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=intercept, drop=drop, output=output)
     return y_vec, x_mat, x_names

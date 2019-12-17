@@ -12,9 +12,9 @@ from .summary import param_table
 ## high dimensional fixed effects
 # x expects strings or expressions
 # fe can have strings or tuples of strings
-def ols(y, x=[], fe=[], data=None, absorb=None, cluster=None, intercept=True, drop='first', output='table'):
+def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None, intercept=True, drop='first', output='table'):
     # make design matrices
-    y_vec, x_mat, x_names = design_matrices(y, x=x, fe=fe, data=data, intercept=intercept, drop=drop)
+    y_vec, x_mat, x_names = design_matrices(y, x=x, fe=fe, formula=formula, data=data, intercept=intercept, drop=drop)
     N, K = x_mat.shape
 
     # use absorption
@@ -25,10 +25,8 @@ def ols(y, x=[], fe=[], data=None, absorb=None, cluster=None, intercept=True, dr
 
     # linalg tool select
     if sp.issparse(x_mat):
-        solve = sp.linalg.spsolve
         inv = sp.linalg.inv
     else:
-        solve = np.linalg.solve
         inv = np.linalg.inv
 
     # find point estimates
@@ -65,4 +63,10 @@ def ols(y, x=[], fe=[], data=None, absorb=None, cluster=None, intercept=True, dr
     if output == 'table':
         return param_table(beta, sigma, x_names)
     else:
-        return beta, sigma, x_names
+        return {
+            'beta': beta,
+            'sigma': sigma,
+            'x_names': x_names,
+            'y_hat': y_hat,
+            'e_hat': e_hat
+        }
