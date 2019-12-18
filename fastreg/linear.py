@@ -27,17 +27,17 @@ def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None,
     inv = sp.linalg.inv if sp.issparse(x_mat) else np.linalg.inv
 
     # find point estimates
-    xpx = x_mat.T.dot(x_mat)
-    xpy = x_mat.T.dot(y_vec)
+    xpx = x_mat.T @ x_mat
+    xpy = x_mat.T @ y_vec
     ixpx = inv(xpx)
-    beta = ixpx.dot(xpy)
+    beta = ixpx @ xpy
 
     # just the betas
     if output == 'beta':
         return beta
 
     # find residuals
-    y_hat = x_mat.dot(beta)
+    y_hat = x_mat @ beta
     e_hat = y_vec - y_hat
 
     # find standard errors
@@ -50,11 +50,11 @@ def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None,
         # from cameron and miller
         xe2 = np.zeros((K, K))
         for sel in c_idx:
-            xei = x_mat[sel, :].T.dot(e_hat[sel])
+            xei = x_mat[sel, :].T @ e_hat[sel]
             xe2 += np.outer(xei, xei)
-        sigma = np.dot(np.dot(ixpx, xe2), ixpx)
+        sigma = ixpx @ xe2 @ ixpx
     else:
-        s2 = np.dot(e_hat, e_hat)/(N-K)
+        s2 = (e_hat @ e_hat)/(N-K)
         sigma = s2*ixpx
 
     if output == 'table':
