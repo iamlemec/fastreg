@@ -34,6 +34,12 @@ Regress `y` on `x1`, `x2`, categorical `id1`, and all combinations of categorica
 linear.ols(y='y', x=['x1', 'x2'], fe=['id1', ('id2', 'id3')], data=data)
 ```
 
+Instead of passing `y`, `x`, and `fe`, you can also pass an R-style formula string to `formula`, as in:
+```
+linear.ols(formula='y ~ x1 + x2 + C(id1) + C(id2)', data=data)
+```
+Right now, coding schemes other than treatment and mixing continuous and categorical variables in one term are not supported.
+
 You can pass a list of column names to `cluster` to cluster standard errors on those variables. You can also pass a list of columns to `absorb` to absorb those variables a la Stata's `areg`. This will automatically cluster on those variables as well.
 
 ### Experimental
