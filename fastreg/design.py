@@ -5,6 +5,7 @@
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
+from patsy.desc import ModelDesc
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 from itertools import product, chain
 
@@ -47,12 +48,43 @@ def chainer(v):
 ## R style formulas
 ##
 
-# will fail on complex expressions with spaces, as in: y ~ a + log(b + c)
+def parse_term(term):
+    return tuple(f.code for f in term.factors)
+
+def classify_term(term):
+    cats = [f.startswith('C(') and f.endswith(')') for f in term]
+    if len(term) == 0:
+        return 'intercept'
+    elif all(cats):
+        return 'categorical'
+    elif all([not c for c in cats]):
+        return 'continuous'
+    else:
+        raise(Exception(f'Can\'t mix continuous and categorical right now: {term}'))
+
+def strip_cat(term):
+    return tuple(f[2:-1] for f in term)
+
+def squeeze_term(term):
+    return term[0] if len(term) == 1 else term
+
+# this obviously can't handle anything but treatment coding, but that's required for sparsity
 def parse_formula(form):
-    left, right = form.split(' ~ ')
-    y = left.strip()
-    x = [s.strip() for s in right.split(' + ')]
-    return y, x
+    # use patsy for formula parse
+    desc = ModelDesc.from_formula(form)
+
+    # convert to string lists
+    y_terms = [parse_term(t) for t in desc.lhs_termlist]
+    x_terms = [parse_term(t) for t in desc.rhs_termlist]
+    x_class = [classify_term(t) for t in x_terms]
+
+    # separate into components
+    y = squeeze_term(y_terms[0])
+    x = [squeeze_term(t) for t, c in zip(x_terms, x_class) if c == 'continuous']
+    fe = [squeeze_term(strip_cat(t)) for t, c in zip(x_terms, x_class) if c == 'categorical']
+    intercept = any([c == 'intercept' for c in x_class])
+
+    return y, x, fe, intercept
 
 ##
 ## design
@@ -190,7 +222,7 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
 
 def design_matrices(y, x=[], fe=[], formula=None, data=None, intercept=True, drop='first', output=None):
     if formula is not None:
-        y, x = parse_formula(formula)
+        y, x, fe, intercept = parse_formula(formula)
     y_vec = frame_eval(y, data)
     x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=intercept, drop=drop, output=output)
     return y_vec, x_mat, x_names

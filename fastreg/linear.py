@@ -24,10 +24,7 @@ def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None,
         y_vec, x_mat, c_idx = absorb_categorical(y_vec, x_mat, c_abs)
 
     # linalg tool select
-    if sp.issparse(x_mat):
-        inv = sp.linalg.inv
-    else:
-        inv = np.linalg.inv
+    inv = sp.linalg.inv if sp.issparse(x_mat) else np.linalg.inv
 
     # find point estimates
     xpx = x_mat.T.dot(x_mat)
