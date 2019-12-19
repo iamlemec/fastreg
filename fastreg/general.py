@@ -1,5 +1,6 @@
-from jax import jit, grad, jacobian, hessian
-from jax.scipy.special import gammaln
+import jax
+import jax.lax as lax
+import jax.scipy.special as spec
 import jax.numpy as np
 import numpy as np0
 import scipy.sparse as sp
@@ -13,6 +14,22 @@ from .summary import param_table
 
 # numbers
 eps = 1e-7
+
+# polygamma functions
+@jax.custom_transforms
+def trigamma(x):
+    return 1/x + 1/(2*x**2) + 1/(6*x**3) - 1/(30*x**5) + 1/(42*x**7) - 1/(30*x**9) + 5/(66*x**11) - 691/(2730*x**13) + 7/(6*x**15)
+
+@jax.custom_transforms
+def digamma(x):
+    return spec.digamma(x)
+
+@jax.custom_transforms
+def gammaln(x):
+    return spec.gammaln(x)
+
+jax.defjvp(digamma, lambda g, y, x: lax.mul(g, trigamma(x)))
+jax.defjvp(gammaln, lambda g, y, x: lax.mul(g, digamma(x)))
 
 # link functions
 links = {
@@ -57,15 +74,16 @@ class DataLoader:
 
 # maximum likelihood using jax -  this expects a mean log likelihood
 # can only handle dense x
-def maxlike(y, x, model, params0, batch_size=4092, epochs=3, learning_rate=0.5, output=None):
+def maxlike(y, x, model, params0, batch_size=4092, epochs=3, learning_rate=0.5, step=1e-4, output=None):
     # compute derivatives
-    g0_fun = grad(model)
-    h0_fun = hessian(model)
+    fg0_fun = jax.value_and_grad(model)
+    g0_fun = jax.grad(model)
+    h0_fun = jax.hessian(model)
 
     # generate functions
-    f_fun = jit(model)
-    g_fun = jit(g0_fun)
-    h_fun = jit(h0_fun)
+    fg_fun = jax.jit(fg0_fun)
+    g_fun = jax.jit(g0_fun)
+    h_fun = jax.jit(h0_fun)
 
     # construct dataset
     N, K = len(y), len(params0)
@@ -82,8 +100,7 @@ def maxlike(y, x, model, params0, batch_size=4092, epochs=3, learning_rate=0.5, 
         # iterate over batches
         for y_bat, x_bat in data:
             # compute gradients
-            loss = f_fun(params, y_bat, x_bat)
-            diff = g_fun(params, y_bat, x_bat)
+            loss, diff = fg_fun(params, y_bat, x_bat)
 
             # compute step
             step = -learning_rate*diff
@@ -105,11 +122,24 @@ def maxlike(y, x, model, params0, batch_size=4092, epochs=3, learning_rate=0.5, 
     if output == 'beta':
         return params.copy(), None
 
-    # get hessian matrix
-    hess = np.zeros((K, K))
-    for y_bat, x_bat in data:
-        hess += h_fun(params, y_bat, x_bat)
-    hess *= batch_size/N
+    try:
+        # get hessian matrix
+        hess = np.zeros((K, K))
+        for y_bat, x_bat in data:
+            hess += h_fun(params, y_bat, x_bat)
+        hess *= batch_size/N
+    except Exception as e:
+        # our gods have failed us
+        print(e) # source of error
+        print('Falling back to finite difference for hessian')
+        hess_rows = [np.zeros(K) for i in range(K)]
+        diff = step*np.eye(K)
+        for y_bat, x_bat in data:
+            g0_batch = g_fun(params, y_bat, x_bat)[None, :]
+            for i in range(K):
+                params1 = params + diff[i, :]
+                hess_rows[i] += g_fun(params1, y_bat, x_bat) - g0_batch
+        hess = np.vstack(hess_rows)*(batch_size/N)/step
 
     # get cov matrix
     sigma = np.linalg.inv(hess)/N
@@ -155,26 +185,26 @@ def glm(y, x=[], fe=[], data=None, extra=None, link=None, loss=None, intercept=T
 
 def logit(y, x=[], fe=[], data=None, **kwargs):
     link = links['logit']
-    loss = losses['binary']
-    return glm(y, x=x, fe=fe, data=data, link=link, loss=loss, **kwargs)
+    like = losses['binary']
+    return glm(y, x=x, fe=fe, data=data, link=link, loss=like, **kwargs)
 
 # poisson regression
 def poisson(y, x=[], fe=[], data=None, **kwargs):
     link = links['exponential']
-    loss = losses['poisson']
-    return glm(y, x=x, fe=fe, data=data, link=link, loss=loss, **kwargs)
+    like = losses['poisson']
+    return glm(y, x=x, fe=fe, data=data, link=link, loss=like, **kwargs)
 
 # zero inflated poisson regression
 def zero_inflated_poisson(y, x=[], fe=[], data=None, **kwargs):
     # base poisson distribution
     link = links['exponential']
-    loss0 = losses['poisson']
+    like0 = losses['poisson']
     extra = ['lpzero']
 
     # zero inflation
     def loss(par, yh, y):
         pzero = 1/(1+np.exp(-par[0]))
-        like = pzero*(y==0) + (1-pzero)*np.exp(loss0(yh, y))
+        like = pzero*(y==0) + (1-pzero)*np.exp(like0(yh, y))
         return np.log(like)
 
     return glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, **kwargs)
@@ -189,7 +219,23 @@ def negative_binomial(y, x=[], fe=[], data=None, **kwargs):
         r = np.exp(-par[0])
         return like(r, yh, y)
 
-    return glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, output='beta', **kwargs)
+    return glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, **kwargs)
+
+# zero inflated poisson regression
+def zero_inflated_negative_binomial(y, x=[], fe=[], data=None, **kwargs):
+    # base poisson distribution
+    link = links['exponential']
+    like0 = losses['negative_binomial']
+    extra = ['lpzero', 'lalpha']
+
+    # zero inflation
+    def loss(par, yh, y):
+        pzero = 1/(1+np.exp(-par[0]))
+        r = np.exp(-par[1])
+        like = pzero*(y==0) + (1-pzero)*np.exp(like0(r, yh, y))
+        return np.log(like)
+
+    return glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, **kwargs)
 
 # ordinary least squares (just for kicks)
 def ordinary_least_squares(y, x=[], fe=[], data=None, **kwargs):

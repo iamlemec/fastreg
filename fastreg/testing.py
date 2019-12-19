@@ -5,15 +5,21 @@ import matplotlib.pyplot as plt
 # true parameters
 c = {
     'one': 0.0,
+    'sigma': 1.0,
     'x1': 0.6,
     'x2': 0.2,
     'id1': 0.2,
     'id2': 0.5,
-    'pz': 0.2
+    'pz': 0.2,
+    'alpha': 0.3
 }
 
 # poisson dampening
 pfact = 100
+
+# good negbin in terms of mean and overdispersion (var = m + alpha*m^2)
+def rand_negbin(mean, alpha, size=None, state=np.random):
+    return state.negative_binomial(1/alpha, 1/(1+alpha*mean), size=size)
 
 def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
     # init random
@@ -21,7 +27,6 @@ def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
 
     # core regressors
     df = pd.DataFrame({
-        'one': 1,
         'id1': st.randint(K1, size=N),
         'id2': st.randint(K2, size=N),
         'x1': st.randn(N),
@@ -32,24 +37,33 @@ def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
     df['yhat0'] = c['one'] + c['x1']*df['x1'] + c['x2']*df['x2']
     df['yhat'] = df['yhat0'] + c['id1']*df['id1']/pfact + c['id2']*df['id2']/pfact
 
-    # ols outcomes
-    df['y0'] = df['yhat0'] + st.randn(N)
-    df['y'] = df['yhat'] + st.randn(N)
-
-    # poisson outcomes
-    df['Ep0'] = np.exp(df['yhat0'])
-    df['Ep'] = np.exp(df['yhat'])
-    df['p0'] = st.poisson(df['Ep0'])
-    df['p'] = st.poisson(df['Ep'])
-
-    # zero-inflated poisson
-    df['pz'] = np.where(st.rand(N) < c['pz'], 0, df['p'])
+    # linear
+    df['y0'] = df['yhat0'] + c['sigma']*st.randn(N)
+    df['y'] = df['yhat'] + c['sigma']*st.randn(N)
 
     # logit
     df['Eb0'] = 1/(1+np.exp(-df['yhat0']))
     df['Eb'] = 1/(1+np.exp(-df['yhat']))
     df['b0'] = (st.randn(N) < df['Eb0']).astype(np.int)
     df['b'] = (st.randn(N) < df['Eb']).astype(np.int)
+
+    # poisson
+    df['Ep0'] = np.exp(df['yhat0'])
+    df['Ep'] = np.exp(df['yhat'])
+    df['p0'] = st.poisson(df['Ep0'])
+    df['p'] = st.poisson(df['Ep'])
+
+    # zero-inflated poisson
+    df['pz0'] = np.where(st.rand(N) < c['pz'], 0, df['p0'])
+    df['pz'] = np.where(st.rand(N) < c['pz'], 0, df['p'])
+
+    # negative binomial
+    df['nb0'] = rand_negbin(df['Ep0'], c['alpha'], state=st)
+    df['nb'] = rand_negbin(df['Ep'], c['alpha'], state=st)
+
+    # zero-inflated poisson
+    df['nbz0'] = np.where(st.rand(N) < c['pz'], 0, df['nb0'])
+    df['nbz'] = np.where(st.rand(N) < c['pz'], 0, df['nb'])
 
     return df
 
