@@ -14,6 +14,7 @@ from .summary import param_table
 
 # numbers
 eps = 1e-7
+clip_like = 20.0
 
 # polygamma functions
 @jax.custom_transforms
@@ -30,6 +31,9 @@ def gammaln(x):
 
 jax.defjvp(digamma, lambda g, y, x: lax.mul(g, trigamma(x)))
 jax.defjvp(gammaln, lambda g, y, x: lax.mul(g, digamma(x)))
+
+def sigmoid(x):
+    return 1/(1+np.exp(-x))
 
 # link functions
 links = {
@@ -72,8 +76,7 @@ class DataLoader:
 ## estimation
 ##
 
-# maximum likelihood using jax -  this expects a mean log likelihood
-# can only handle dense x
+# maximum likelihood using jax - this expects a mean log likelihood
 def maxlike(y, x, model, params0, batch_size=4092, epochs=3, learning_rate=0.5, step=1e-4, output=None):
     # compute derivatives
     fg0_fun = jax.value_and_grad(model)
@@ -203,8 +206,9 @@ def zero_inflated_poisson(y, x=[], fe=[], data=None, **kwargs):
 
     # zero inflation
     def loss(par, yh, y):
-        pzero = 1/(1+np.exp(-par[0]))
-        like = pzero*(y==0) + (1-pzero)*np.exp(like0(yh, y))
+        pzero = sigmoid(par[0])
+        clike = np.clip(like0(yh, y), a_max=clip_like)
+        like = pzero*(y==0) + (1-pzero)*np.exp(clike)
         return np.log(like)
 
     return glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, **kwargs)
@@ -230,9 +234,10 @@ def zero_inflated_negative_binomial(y, x=[], fe=[], data=None, **kwargs):
 
     # zero inflation
     def loss(par, yh, y):
-        pzero = 1/(1+np.exp(-par[0]))
+        pzero = sigmoid(par[0])
         r = np.exp(-par[1])
-        like = pzero*(y==0) + (1-pzero)*np.exp(like0(r, yh, y))
+        clike = np.clip(like0(r, yh, y), a_max=clip_like)
+        like = pzero*(y==0) + (1-pzero)*np.exp(clike)
         return np.log(like)
 
     return glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, **kwargs)
