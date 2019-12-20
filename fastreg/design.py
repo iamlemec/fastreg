@@ -151,8 +151,13 @@ def sparse_categorical(terms, data, drop='first'):
 ## absorption
 ##
 
-# returns forward and backward mapping
 def category_indices(cats):
+    cats1 = cats.view([('', np.float)]*cats.shape[1]).squeeze()
+    c_val, c_idx = np.unique(cats1, return_inverse=True)
+    return c_idx
+
+# returns forward and backward mapping
+def category_maps(cats):
     cats = cats.squeeze()
     if cats.ndim == 1:
         vals = pd.Categorical(cats)
@@ -161,29 +166,35 @@ def category_indices(cats):
     group = vals._reverse_indexer()
     return vals.codes, list(group.values())
 
+def group_sums(x, group):
+    return np.array([np.bincount(group, weights=x[:, j]) for j in range(x.shape[1])])
+
 def absorb_categorical(y, x, abs):
     N, K = x.shape
+    _, A = abs.shape
 
     # store original means
     avg_y0 = np.mean(y)
     avg_x0 = np.mean(x, axis=0)
 
-    # create class groups
-    codes, groups = category_indices(abs)
+    # do this iteratively to reduce data loss
+    for j in range(A):
+        # create class groups
+        codes, groups = category_maps(abs[:, j])
 
-    # perform differencing on y
-    avg_y = np.array([np.mean(y[i]) for i in groups])
-    y -= avg_y[codes]
+        # perform differencing on y
+        avg_y = np.array([np.mean(y[i]) for i in groups])
+        y -= avg_y[codes]
 
-    # perform differencing on x
-    avg_x = np.vstack([np.mean(x[i, :], axis=0) for i in groups])
-    x -= avg_x[codes, :]
+        # perform differencing on x
+        avg_x = np.vstack([np.mean(x[i, :], axis=0) for i in groups])
+        x -= avg_x[codes, :]
 
     # recenter means
     y += avg_y0
     x += avg_x0[None, :]
 
-    return y, x, groups
+    return y, x
 
 ##
 ## design interface
@@ -223,6 +234,6 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
 def design_matrices(y, x=[], fe=[], formula=None, data=None, intercept=True, drop='first', output=None):
     if formula is not None:
         y, x, fe, intercept = parse_formula(formula)
-    y_vec = frame_eval(y, data)
+    y_vec = frame_eval(y, data).copy()
     x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=intercept, drop=drop, output=output)
     return y_vec, x_mat, x_names
