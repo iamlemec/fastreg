@@ -14,7 +14,7 @@ outing = lambda z: np.outer(z, z)
 ## high dimensional fixed effects
 # x expects strings or expressions
 # fe can have strings or tuples of strings
-def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None, intercept=True, drop='first', output='table', method='inv'):
+def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None, intercept=True, drop='first', output='table', method='solve'):
     # make design matrices
     y_vec, x_mat, x_names = design_matrices(y, x=x, fe=fe, formula=formula, data=data, intercept=intercept, drop=drop)
     N, K = x_mat.shape
@@ -54,11 +54,11 @@ def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None,
     if cluster is not None:
         # if we haven't already calculated for absorb
         cluster = frame_matrix(cluster, data)
-        c_idx = category_indices(cluster)
+        codes = category_indices(cluster)
 
         # from cameron and miller
-        xeg = group_sums(x_mat*e_hat[:, None], c_idx)
-        xe2 = xeg @ xeg.T
+        xeg = group_sums(x_mat*e_hat[:, None], codes)
+        xe2 = xeg.T @ xeg
         sigma = ixpx @ xe2 @ ixpx
     else:
         s2 = (e_hat @ e_hat)/(N-K)

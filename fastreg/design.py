@@ -7,6 +7,7 @@ import pandas as pd
 import scipy.sparse as sp
 from patsy.desc import ModelDesc
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
+from pandas._libs import algos
 from itertools import product, chain
 
 ##
@@ -112,8 +113,8 @@ def sparse_categorical(terms, data, drop='first'):
     term_map = [[feats.index(z) for z in t] for t in terms]
 
     # ordinally encode fixed effects
-    enc_ord = OrdinalEncoder(categories='auto')
-    feat_ord = enc_ord.fit_transform(feat_mat).astype(np.int)
+    enc_ord = OrdinalEncoder(categories='auto', dtype=np.int)
+    feat_ord = enc_ord.fit_transform(feat_mat)
     feat_names = [z.astype(str) for z in enc_ord.categories_]
     feat_sizes = [len(z) for z in enc_ord.categories_]
 
@@ -124,7 +125,7 @@ def sparse_categorical(terms, data, drop='first'):
         # generate cross matrices
         term_sizes = [feat_sizes[i] for i in term_idx]
         term_strides = strides(term_sizes)
-        cross_vals = feat_ord[:,term_idx].dot(term_strides)
+        cross_vals = feat_ord[:,term_idx] @ term_strides
         form_vals.append(cross_vals)
 
         # generate cross names
@@ -151,23 +152,27 @@ def sparse_categorical(terms, data, drop='first'):
 ## absorption
 ##
 
-def category_indices(cats):
-    cats1 = cats.view([('', np.float)]*cats.shape[1]).squeeze()
-    c_val, c_idx = np.unique(cats1, return_inverse=True)
-    return c_idx
+def category_indices(vals):
+    if vals.ndim == 1:
+        vals = vals[:, None]
+    ord_enc = OrdinalEncoder(categories='auto', dtype=np.int)
+    ord_vals = ord_enc.fit_transform(vals)
+    ord_sizes = [len(x) for x in ord_enc.categories_]
+    ord_strides = strides(ord_sizes)
+    ord_cross = ord_vals @ ord_strides
+    return ord_cross
 
-# returns forward and backward mapping
-def category_maps(cats):
-    cats = cats.squeeze()
-    if cats.ndim == 1:
-        vals = pd.Categorical(cats)
-    else:
-        vals = pd.Categorical(zip(*cats.T))
-    group = vals._reverse_indexer()
-    return vals.codes, list(group.values())
+# assumes packed integer codes
+def reverse_indexer(codes):
+    ncats = codes.max() + 1
+    r, counts = algos.groupsort_indexer(codes, ncats)
+    counts = counts.cumsum()
+    result = [r[start:end] for start, end in zip(counts, counts[1:])]
+    return result
 
+# this is from statsmodels
 def group_sums(x, group):
-    return np.array([np.bincount(group, weights=x[:, j]) for j in range(x.shape[1])])
+    return np.vstack([np.bincount(group, weights=x[:, j]) for j in range(x.shape[1])]).T
 
 def absorb_categorical(y, x, abs):
     N, K = x.shape
@@ -180,7 +185,8 @@ def absorb_categorical(y, x, abs):
     # do this iteratively to reduce data loss
     for j in range(A):
         # create class groups
-        codes, groups = category_maps(abs[:, j])
+        codes = category_indices(abs[:, j])
+        groups = reverse_indexer(codes)
 
         # perform differencing on y
         avg_y = np.array([np.mean(y[i]) for i in groups])
