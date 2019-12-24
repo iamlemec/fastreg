@@ -11,7 +11,7 @@ from pandas._libs import algos
 from itertools import product, chain
 
 ##
-## tools
+## vector tools
 ##
 
 # handles empty data
@@ -44,6 +44,114 @@ def swizzle(ks, vs):
 
 def chainer(v):
     return list(chain.from_iterable(v))
+
+##
+## categorical tools
+##
+
+def category_indices(vals, return_labels=False):
+    if vals.ndim == 1:
+        vals = vals[:, None]
+
+    # convert to packed integers
+    ord_enc = OrdinalEncoder(categories='auto', dtype=np.int)
+    ord_vals = ord_enc.fit_transform(vals)
+    ord_cats = ord_enc.categories_
+
+    # interact with product
+    ord_sizes = [len(x) for x in ord_cats]
+    ord_strides = strides(ord_sizes)
+    ord_cross = ord_vals @ ord_strides
+
+    # return requested
+    if return_labels:
+        ord_labels = list(product(*ord_cats))
+        return ord_cross, ord_labels
+    else:
+        return ord_cross
+
+# assumes packed integer codes
+def reverse_indexer(codes):
+    ncats = codes.max() + 1
+    r, counts = algos.groupsort_indexer(codes, ncats)
+    counts = counts.cumsum()
+    result = [r[start:end] for start, end in zip(counts, counts[1:])]
+    return result
+
+# this is from statsmodels
+def group_sums(x, group):
+    return np.vstack([np.bincount(group, weights=x[:, j]) for j in range(x.shape[1])]).T
+
+##
+## design matrices
+##
+
+def frame_eval(exp, data, engine='pandas'):
+    if engine == 'pandas':
+        return data.eval(exp).values
+    elif engine == 'python':
+        return eval(exp, globals(), data).values
+
+def frame_matrix(terms, data):
+    if type(terms) is str:
+        terms = [terms]
+    return vstack([frame_eval(z, data) for z in terms]).T
+
+# this is mildly inefficient in the case of overlap
+def sparse_categorical(terms, data, drop='first'):
+    if len(terms) == 0:
+        return None, []
+
+    # ordinal encode each term
+    term_mats = [frame_matrix(t, data) for t in terms]
+    term_vals, term_labels = zip(*[category_indices(m, return_labels=True) for m in term_mats])
+
+    # one hot encode all terms
+    hot = OneHotEncoder(categories='auto', drop=drop)
+    form_mat = vstack(term_vals).T
+    form_spmat = hot.fit_transform(form_mat)
+
+    # find all cross-term names
+    if hot.drop_idx_ is None:
+        seen_cats = hot.categories_
+    else:
+        seen_cats = [np.delete(c, i) for c, i in zip(hot.categories_, hot.drop_idx_)]
+    seen_labels = [[n[i] for i in c] for c, n in zip(seen_cats, term_labels)]
+    form_labels = chainer([swizzle(t, i) for i in n] for t, n in zip(terms, seen_labels))
+
+    return form_spmat, form_labels
+
+##
+## categorical absorption
+##
+
+def absorb_categorical(y, x, abs):
+    N, K = x.shape
+    _, A = abs.shape
+
+    # store original means
+    avg_y0 = np.mean(y)
+    avg_x0 = np.mean(x, axis=0)
+
+    # do this iteratively to reduce data loss
+    for j in range(A):
+        # create class groups
+        codes = category_indices(abs[:, j])
+        groups = reverse_indexer(codes)
+
+        # perform differencing on y
+        avg_y = np.array([np.mean(y[i]) for i in groups])
+        y -= avg_y[codes]
+
+        # perform differencing on x
+        avg_x = np.vstack([np.mean(x[i, :], axis=0) for i in groups])
+        x -= avg_x[codes, :]
+
+    # recenter means
+    y += avg_y0
+    x += avg_x0[None, :]
+
+    return y, x
 
 ##
 ## R style formulas
@@ -86,121 +194,6 @@ def parse_formula(form):
     intercept = any([c == 'intercept' for c in x_class])
 
     return y, x, fe, intercept
-
-##
-## design
-##
-
-def frame_eval(exp, data, engine='pandas'):
-    if engine == 'pandas':
-        return data.eval(exp).values
-    elif engine == 'python':
-        return eval(exp, globals(), data).values
-
-def frame_matrix(terms, data):
-    if type(terms) is str:
-        terms = [terms]
-    return vstack([frame_eval(z, data) for z in terms]).T
-
-def sparse_categorical(terms, data, drop='first'):
-    if len(terms) == 0:
-        return None, []
-
-    # generate map between terms and features
-    terms = [(z,) if type(z) is str else z for z in terms]
-    feats = chainer(terms)
-    feat_mat = frame_matrix(feats, data)
-    term_map = [[feats.index(z) for z in t] for t in terms]
-
-    # ordinally encode fixed effects
-    enc_ord = OrdinalEncoder(categories='auto', dtype=np.int)
-    feat_ord = enc_ord.fit_transform(feat_mat)
-    feat_names = [z.astype(str) for z in enc_ord.categories_]
-    feat_sizes = [len(z) for z in enc_ord.categories_]
-
-    # generate cross-matrices and cross-names
-    form_vals = []
-    form_names = []
-    for term_idx in term_map:
-        # generate cross matrices
-        term_sizes = [feat_sizes[i] for i in term_idx]
-        term_strides = strides(term_sizes)
-        cross_vals = feat_ord[:,term_idx] @ term_strides
-        form_vals.append(cross_vals)
-
-        # generate cross names
-        term_names = [feat_names[i] for i in term_idx]
-        cross_names = [x for x in product(*term_names)]
-        form_names.append(cross_names)
-
-    # one hot encode all (cross)-terms
-    hot = OneHotEncoder(categories='auto', drop=drop)
-    final_mat = vstack(form_vals).T
-    final_spmat = hot.fit_transform(final_mat)
-
-    # find all cross-term names
-    if hot.drop_idx_ is None:
-        seen_cats = hot.categories_
-    else:
-        seen_cats = [np.delete(c, i) for c, i in zip(hot.categories_, hot.drop_idx_)]
-    seen_names = [[n[i] for i in c] for c, n in zip(seen_cats, form_names)]
-    final_names = chainer([swizzle(t, i) for i in n] for t, n in zip(terms, seen_names))
-
-    return final_spmat, final_names
-
-##
-## absorption
-##
-
-def category_indices(vals):
-    if vals.ndim == 1:
-        vals = vals[:, None]
-    ord_enc = OrdinalEncoder(categories='auto', dtype=np.int)
-    ord_vals = ord_enc.fit_transform(vals)
-    ord_sizes = [len(x) for x in ord_enc.categories_]
-    ord_strides = strides(ord_sizes)
-    ord_cross = ord_vals @ ord_strides
-    return ord_cross
-
-# assumes packed integer codes
-def reverse_indexer(codes):
-    ncats = codes.max() + 1
-    r, counts = algos.groupsort_indexer(codes, ncats)
-    counts = counts.cumsum()
-    result = [r[start:end] for start, end in zip(counts, counts[1:])]
-    return result
-
-# this is from statsmodels
-def group_sums(x, group):
-    return np.vstack([np.bincount(group, weights=x[:, j]) for j in range(x.shape[1])]).T
-
-def absorb_categorical(y, x, abs):
-    N, K = x.shape
-    _, A = abs.shape
-
-    # store original means
-    avg_y0 = np.mean(y)
-    avg_x0 = np.mean(x, axis=0)
-
-    # do this iteratively to reduce data loss
-    for j in range(A):
-        # create class groups
-        codes = category_indices(abs[:, j])
-        groups = reverse_indexer(codes)
-
-        # perform differencing on y
-        avg_y = np.array([np.mean(y[i]) for i in groups])
-        y -= avg_y[codes]
-
-        # perform differencing on x
-        avg_x = np.vstack([np.mean(x[i, :], axis=0) for i in groups])
-        x -= avg_x[codes, :]
-
-    # recenter means
-    y += avg_y0
-    x += avg_x0[None, :]
-
-    return y, x
 
 ##
 ## design interface
