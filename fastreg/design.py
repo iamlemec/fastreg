@@ -71,7 +71,7 @@ def category_indices(vals, return_labels=False):
         return ord_cross
 
 # assumes packed integer codes
-def reverse_indexer(codes):
+def reverse_indices(codes):
     ncats = codes.max() + 1
     r, counts = algos.groupsort_indexer(codes, ncats)
     counts = counts.cumsum()
@@ -79,8 +79,17 @@ def reverse_indexer(codes):
     return result
 
 # this is from statsmodels
-def group_sums(x, group):
-    return np.vstack([np.bincount(group, weights=x[:, j]) for j in range(x.shape[1])]).T
+def group_sums(x, codes):
+    if x.ndim == 1:
+        return np.bincount(codes, weights=x)
+    else:
+        return np.vstack([np.bincount(codes, weights=x[:, j]) for j in range(x.shape[1])]).T
+
+def group_means(x, codes):
+    if x.ndim == 1:
+        return group_sums(x, codes)/np.bincount(codes)
+    else:
+        return group_sums(x, codes)/np.bincount(codes)[:, None]
 
 ##
 ## design matrices
@@ -137,14 +146,13 @@ def absorb_categorical(y, x, abs):
     for j in range(A):
         # create class groups
         codes = category_indices(abs[:, j])
-        groups = reverse_indexer(codes)
 
         # perform differencing on y
-        avg_y = np.array([np.mean(y[i]) for i in groups])
+        avg_y = group_means(y, codes)
         y -= avg_y[codes]
 
         # perform differencing on x
-        avg_x = np.vstack([np.mean(x[i, :], axis=0) for i in groups])
+        avg_x = group_means(x, codes)
         x -= avg_x[codes, :]
 
     # recenter means
