@@ -3,13 +3,10 @@
 ##
 
 import numpy as np
-import pandas as pd
 import scipy.sparse as sp
 
-from .design import design_matrices, frame_eval, frame_matrix, absorb_categorical, category_indices, group_sums
+from .design import design_matrices, frame_matrix, absorb_categorical, category_indices, group_sums
 from .summary import param_table
-
-outing = lambda z: np.outer(z, z)
 
 ## high dimensional fixed effects
 # x expects strings or expressions
