@@ -20,7 +20,7 @@ def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None,
     if absorb is not None:
         cluster = absorb
         c_abs = frame_matrix(absorb, data)
-        y_vec, x_mat = absorb_categorical(y_vec, x_mat, c_abs)
+        y_vec, x_mat, keep = absorb_categorical(y_vec, x_mat, c_abs)
 
     # linalg tool select
     if sp.issparse(x_mat):
@@ -49,11 +49,12 @@ def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None,
 
     # find standard errors
     if cluster is not None:
-        # if we haven't already calculated for absorb
-        cluster = frame_matrix(cluster, data)
-        codes = category_indices(cluster)
+        c_mat = frame_matrix(cluster, data)
+        if absorb is not None:
+            c_mat = c_mat[keep, :]
 
         # from cameron and miller
+        codes = category_indices(c_mat)
         xeg = group_sums(x_mat*e_hat[:, None], codes)
         xe2 = xeg.T @ xeg
         sigma = ixpx @ xe2 @ ixpx

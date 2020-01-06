@@ -141,6 +141,9 @@ def absorb_categorical(y, x, abs):
     avg_y0 = np.mean(y)
     avg_x0 = np.mean(x, axis=0)
 
+    # track whether to drop
+    keep = np.ones(N, dtype=np.bool)
+
     # do this iteratively to reduce data loss
     for j in range(A):
         # create class groups
@@ -154,11 +157,19 @@ def absorb_categorical(y, x, abs):
         avg_x = group_means(x, codes)
         x -= avg_x[codes, :]
 
+        # detect singletons
+        multi = np.bincount(codes) > 1
+        keep &= multi[codes]
+
     # recenter means
     y += avg_y0
     x += avg_x0[None, :]
 
-    return y, x
+    # drop singletons
+    y = y[keep]
+    x = x[keep, :]
+
+    return y, x, keep
 
 ##
 ## R style formulas
