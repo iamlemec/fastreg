@@ -60,7 +60,7 @@ class DataLoader:
         self.x = x
         self.batch_size = batch_size
         self.data_size = len(y)
-        self.num_batches = self.data_size // batch_size
+        self.num_batches = max(1, self.data_size // batch_size)
         self.sparse = sp.issparse(x)
 
     def __iter__(self):
