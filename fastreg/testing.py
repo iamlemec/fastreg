@@ -4,12 +4,12 @@ import matplotlib.pyplot as plt
 
 # true parameters
 c = {
-    'one': 0.0,
+    'one': 0.1,
     'sigma': 1.0,
-    'x1': 0.6,
-    'x2': 0.2,
-    'id1': 0.2,
-    'id2': 0.5,
+    'x1': 0.3,
+    'x2': 0.6,
+    'id1': 1.0,
+    'id2': 1.0,
     'pz': 0.2,
     'alpha': 0.3
 }
@@ -35,7 +35,7 @@ def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
 
     # predictors
     df['yhat0'] = c['one'] + c['x1']*df['x1'] + c['x2']*df['x2']
-    df['yhat'] = df['yhat0'] + c['id1']*df['id1']/pfact + c['id2']*df['id2']/pfact
+    df['yhat'] = df['yhat0'] + c['id1']*df['id1']/K1 + c['id2']*df['id2']/K2
 
     # linear
     df['y0'] = df['yhat0'] + c['sigma']*st.randn(N)
