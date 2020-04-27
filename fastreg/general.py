@@ -2,9 +2,11 @@ import jax
 import jax.lax as lax
 import jax.scipy.special as spec
 import jax.numpy as np
-from jax.tree_util import tree_flatten, tree_map, tree_leaves
+from jax.tree_util import tree_leaves, tree_map, tree_multimap, tree_reduce
+from jax.interpreters.xla import DeviceArray
 import numpy as np0
 import scipy.sparse as sp
+import pandas as pd
 
 from .design import design_matrices
 from .summary import param_table
@@ -55,44 +57,79 @@ losses = {
 }
 
 ##
-## batching it
+## batching it, pytree style
 ##
 
-class DataLoader:
-    def __init__(self, y, x, batch_size):
-        self.y = y
-        self.x = x
-        self.batch_size = batch_size
-        self.data_size = len(y)
-        self.num_batches = max(1, self.data_size // batch_size)
-        self.sparse = sp.issparse(x)
+def todense(x):
+    if sp.issparse(x):
+        return x.todense()
+    else:
+        return x
 
+class DataLoader:
+    def __init__(self, data, batch_size):
+        if type(data) is pd.DataFrame:
+            data = data.to_dict('series')
+        self.data = tree_map(np.array, data)
+        self.batch_size = batch_size
+        shapes = [d.shape[0] for d in tree_leaves(self.data)]
+        self.data_size = shapes[0] # should all be the same size
+        self.num_batches = max(1, self.data_size // batch_size)
+
+    # if sparse, requires csc or csr format
     def __iter__(self):
         loc = 0
         for i in range(self.num_batches):
-            by, bx = self.y[loc:loc+self.batch_size], self.x[loc:loc+self.batch_size, :]
-            if self.sparse:
-                bx = bx.toarray()
-            yield by, bx
+            yield tree_map(lambda d: todense(d[loc:loc+self.batch_size]), self.data)
             loc += self.batch_size
+
+##
+## block matrices
+##
+
+def atleast_2d(x, axis=0):
+    x2 = np.atleast_2d(x)
+    if x2.shape[axis] == 1:
+        x2 = x2.T
+    return x2
+
+def get_sizes(dms, subset=None):
+    if subset is None:
+        subset = list(dms)
+    return {k: v.size for k, v in dms.items() if k in subset}
+
+def block_select(dms, sel1=None, sel2=None):
+    if sel1 is None:
+        sel1 = list(dms)
+    if sel2 is None:
+        sel2 = list(dms)
+    return np.block([[atleast_2d(dms[k1][k2], axis=int(i2 < i1)) for i2, k2 in enumerate(dms) if k2 in sel1] for i1, k1 in enumerate(dms) if k1 in sel1])
+
+def block_unpack(mat, sizes):
+    out = {k: {} for k in sizes}
+    pos = [0] + np0.cumsum(list(sizes.values())).tolist()
+    for i1, k1 in enumerate(sizes):
+        for i2, k2 in enumerate(sizes):
+            out[k1][k2] = np.squeeze(mat[pos[i1]:pos[i1+1],pos[i2]:pos[i2+1]])
+    return out
 
 ##
 ## estimation
 ##
 
 # maximum likelihood using jax - this expects a mean log likelihood
-def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, eta=0.001, gamma=0.9, per=100, disp=None, stderr=True):
+def maxlike(model, data, params, c={}, batch_size=4092, epochs=3, learning_rate=0.5, eta=0.001, gamma=0.9, per=100, disp=None, stderr=True):
     # compute derivatives
     vg_fun = jax.jit(jax.value_and_grad(model))
     g_fun = jax.jit(jax.grad(model))
     h_fun = jax.jit(jax.hessian(model))
 
     # construct dataset
-    N = len(y)
-    data = DataLoader(y, x, batch_size)
+    data = DataLoader(data, batch_size)
+    N = data.data_size
 
-    # initialize params
-    grms = {k: np.zeros_like(v) for k, v in params.items()}
+    # track rms gradient
+    grms = tree_map(np.zeros_like, params)
 
     # do training
     for ep in range(epochs):
@@ -100,20 +137,20 @@ def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, e
         agg_loss, agg_batch = 0.0, 0
 
         # iterate over batches
-        for b, (y_bat, x_bat) in enumerate(data):
+        for b, batch in enumerate(data):
             # compute gradients
-            loss, grad = vg_fun(params, y_bat, x_bat)
+            loss, grad = vg_fun(params, batch)
 
             lnan = np.isnan(loss)
-            gnan = tree_map(lambda g: np.isnan(g).any(), grad)
+            pnan = tree_map(lambda g: np.isnan(g).any(), grad)
+            gnan = tree_reduce(lambda a, b: a & b, pnan)
 
-            if lnan or np.any(tree_leaves(gnan)):
+            if lnan or gnan:
                 print('Encountered nans!')
                 return params, None
 
-            for k in params:
-                grms[k] += (1-gamma)*(grad[k]**2-grms[k])
-                params[k] += eta*grad[k]/np.sqrt(grms[k]+eps)
+            grms = tree_multimap(lambda r, g: gamma*r + (1-gamma)*g**2, grms, grad)
+            params = tree_multimap(lambda p, g, r: p + eta*g/np.sqrt(r+eps), params, grad, grms)
 
             # compute statistics
             agg_loss += loss
@@ -126,6 +163,8 @@ def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, e
         if disp is not None:
             disp(ep, avg_loss, params)
 
+    return params, None
+
     # get hessian matrix (should use pytree)
     shapes = {k: v.shape for k, v in params.items()}
     hess = {k1: {k2: np.zeros(v1+v2) for k2, v2 in shapes.items()} for k1, v1 in shapes.items()}
@@ -137,39 +176,66 @@ def maxlike(y, x, model, params, batch_size=4092, epochs=3, learning_rate=0.5, e
 
     # get cov matrix
     if stderr is True:
-        sigma = {k1: {k2: -np.linalg.inv(v2)/N for k2, v2 in v1.items()} for k1, v1 in hess.items()}
+        fish = block_select(hess)
+        ifish = -np.linalg.inv(fish)/N
+        sizes = get_sizes(params)
+        sigma = block_unpack(ifish, sizes)
     elif stderr is None:
         sigma = N*hess
     else:
         # use block diagonal inverse formula
         # https://en.wikipedia.org/wiki/Invertible_matrix#Blockwise_inversion
-        pass
+        nocomp = [k for k in params if k not in stderr]
+
+        A = block_select(hess, stderr, stderr)
+        B = block_select(hess, stderr, nocomp)
+        C = block_select(hess, nocomp, stderr)
+        D = block_select(hess, nocomp, nocomp)
+
+        A1 = np.linalg.inv(A)
+        Z1 = np.linalg.inv(D - C @ A1 @ B)
+        I1 = A1 + A1 @ B @ Z1 @ C @ A1
+        ifish = -I1/N
+
+        sizes = get_sizes(params, subset=stderr)
+        sigma = block_unpack(ifish, sizes)
 
     # return to device
     return params, sigma
 
 # default glm specification
-def glm(y, x=[], fe=[], data=None, extra={}, link=None, loss=None, intercept=True, drop='first', stderr=True, **kwargs):
+def glm(y, x=[], fe=[], data=None, extra={}, link=None, loss=None, intercept=True, stderr=True, **kwargs):
     # construct design matrices
-    y_vec, x_mat, x_names = design_matrices(y, x=x, fe=fe, data=data, intercept=intercept, drop=drop)
-    N, K = x_mat.shape
+    y_vec, x_mat, x_names, c_mat, c_names = design_matrices(y, x=x, fe=fe, data=data, intercept=intercept, method='ordinal')
+
+    # get data shape
+    N = len(y_vec)
+    Kx = len(x_names)
+    Kc = len(c_names)
+    Kl = [len(c) for c in c_names.values()]
 
     # evaluator
-    def model(par, ydat, xdat):
-        beta = par['beta']
-        linear = xdat @ beta
+    def model(par, dat):
+        ydat, xdat, cdat = dat['ydat'], dat['xdat'], dat['cdat']
+        beta_x, beta_c = par['beta_x'], par['beta_c']
+        linear = xdat @ beta_x
+        for i, c in enumerate(beta_c):
+            linear += beta_c[c][cdat[:, i]]
         pred = link(linear)
         like = loss(par, pred, ydat)
         return np.mean(like)
 
     # displayer
     def disp(e, l, p):
-        beta = p['beta']
-        print(f'[{e:3d}] {l:.4f}: {np.mean(beta):.4f} {np.std(beta):.4f}')
+        beta_x, beta_c = p['beta_x'], p['beta_c']
+        c_means = np.array([np.mean(c) for c in beta_c.values()])
+        print(f'[{e:3d}] {l:.4f}: {np.mean(beta_x):.4f} {np.mean(c_means):.4f}')
 
     # estimate model
-    params0 = {'beta': np.zeros(K), **extra}
-    params, sigma = maxlike(y_vec, x_mat, model, params0, stderr=stderr, disp=disp, **kwargs)
+    data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
+    pcateg0 = {c: np.zeros(s) for c, s in zip(c_names, Kl)}
+    params0 = {'beta_x': np.zeros(Kx), 'beta_c': pcateg0, **extra}
+    params, sigma = maxlike(model, data, params0, data, stderr=stderr, disp=disp, **kwargs)
 
     # return relevant
     return params, sigma
@@ -203,12 +269,12 @@ def zero_inflated_poisson(y, x=[], fe=[], data=None, **kwargs):
         return log(like)
 
     # pass to glm
-    par = glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, **kwargs)
+    par, sig = glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, **kwargs)
 
     # transform params
     par['pzero'] = sigmoid(par.pop('lpzero'))
 
-    return par
+    return par, sig
 
 # negative binomial regression
 def negative_binomial(y, x=[], fe=[], data=None, **kwargs):
@@ -270,9 +336,9 @@ def ordinary_least_squares(y, x=[], fe=[], data=None, **kwargs):
         return like
 
     # pass to glm
-    par = glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, **kwargs)
+    par, sig = glm(y, x=x, fe=fe, data=data, extra=extra, link=link, loss=loss, **kwargs)
 
     # transform params
     par['sigma'] = np.exp(par.pop('lsigma'))
 
-    return par
+    return par, sig

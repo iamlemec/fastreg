@@ -5,7 +5,7 @@
 import numpy as np
 import scipy.sparse as sp
 
-from .design import design_matrices, frame_matrix, absorb_categorical, category_indices, group_sums
+from .design import design_matrices, frame_matrix, absorb_categorical, category_indices, group_sums, hstack
 from .summary import param_table
 
 ## high dimensional fixed effects
@@ -13,8 +13,12 @@ from .summary import param_table
 # fe can have strings or tuples of strings
 def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None, intercept=True, drop='first', output='table', method='solve'):
     # make design matrices
-    y_vec, x_mat, x_names = design_matrices(y, x=x, fe=fe, formula=formula, data=data, intercept=intercept, drop=drop)
-    N, K = x_mat.shape
+    y_vec, x0_mat, x0_names, c_mat, c_names = design_matrices(y, x=x, fe=fe, formula=formula, data=data, intercept=intercept, drop=drop)
+    N, K = x0_mat.shape
+
+    # combine x variables
+    x_mat = hstack([x0_mat, c_mat])
+    x_names = x0_names + c_names
 
     # use absorption
     if absorb is not None:

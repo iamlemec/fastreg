@@ -48,6 +48,7 @@ def chainer(v):
 ## categorical tools
 ##
 
+# ordinally encode interactions terms (tuple-like things)
 def category_indices(vals, return_labels=False):
     if vals.ndim == 1:
         vals = vals[:, None]
@@ -106,28 +107,42 @@ def frame_matrix(terms, data):
     return vstack([frame_eval(z, data) for z in terms]).T
 
 # this is mildly inefficient in the case of overlap
-def sparse_categorical(terms, data, drop='first'):
-    if len(terms) == 0:
-        return None, []
+def encode_categorical(terms, data, method='sparse', drop='first'):
+    if (K := len(terms)) == 0:
+        if method == 'ordinal':
+            return None, {}
+        elif method == 'sparse':
+            return None, []
 
     # ordinal encode each term
+    terms = [(t,) if type(t) is str else t for t in terms]
     term_mats = [frame_matrix(t, data) for t in terms]
     term_vals, term_labels = zip(*[category_indices(m, return_labels=True) for m in term_mats])
-
-    # one hot encode all terms
-    hot = OneHotEncoder(categories='auto', drop=drop)
     form_mat = vstack(term_vals).T
-    form_spmat = hot.fit_transform(form_mat)
 
-    # find all cross-term names
-    if hot.drop_idx_ is None:
-        seen_cats = hot.categories_
-    else:
-        seen_cats = [np.delete(c, i) for c, i in zip(hot.categories_, hot.drop_idx_)]
-    seen_labels = [[n[i] for i in c] for c, n in zip(seen_cats, term_labels)]
-    form_labels = chainer([swizzle(t, i) for i in n] for t, n in zip(terms, seen_labels))
+    # compress indices with chosen method
+    # its assumed that if you're doing ordinal, you don't need labels to be dropped or flattened
+    if method == 'ordinal':
+        enc = OrdinalEncoder(categories='auto', dtype=np.int)
+        form_enc = enc.fit_transform(form_mat)
+        cats_all = enc.categories_
+        seen_labels = [[n[i] for i in c] for c, n in zip(cats_all, term_labels)]
+        form_labels = {':'.join(k): v for k, v in zip(terms, seen_labels)}
+    elif method == 'sparse':
+        enc = OneHotEncoder(categories='auto', drop=drop, dtype=np.int)
+        form_enc = enc.fit_transform(form_mat)
+        drop_idx = enc.drop_idx_
+        cats_all = enc.categories_
 
-    return form_spmat, form_labels
+        # find all cross-term names
+        if drop_idx is None:
+            seen_cats = cats_all
+        else:
+            seen_cats = [np.delete(c, i) for c, i in zip(cats_all, drop_idx)]
+        seen_labels = [[n[i] for i in c] for c, n in zip(seen_cats, term_labels)]
+        form_labels = chainer([swizzle(t, i) for i in n] for t, n in zip(terms, seen_labels))
+
+    return form_enc, form_labels
 
 ##
 ## categorical absorption
@@ -136,6 +151,10 @@ def sparse_categorical(terms, data, drop='first'):
 def absorb_categorical(y, x, abs):
     N, K = x.shape
     _, A = abs.shape
+
+    # copy so as not to destroy
+    y = y.copy()
+    x = x.copy()
 
     # store original means
     avg_y0 = np.mean(y)
@@ -217,10 +236,10 @@ def parse_formula(form):
 ## design interface
 ##
 
-def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=None):
+def design_matrix(x=[], fe=[], data=None, intercept=True, method='sparse', drop='first', output=None):
     # construct individual matrices
     x_mat, x_names = frame_matrix(x, data), x
-    c_mat, c_names = sparse_categorical(fe, data, drop=drop)
+    c_mat, c_labels = encode_categorical(fe, data, method=method, drop=drop)
 
     # get data length
     N = len(data)
@@ -231,26 +250,11 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, drop='first', output=N
         x_mat = np.hstack([inter, x_mat]) if x_mat is not None else inter
         x_names = ['one'] + x_names
 
-    # merge dense and sparse
-    names = x_names + c_names
-    mat = hstack([x_mat, c_mat])
+    return x_mat, x_names, c_mat, c_labels
 
-    # just return if null
-    if mat is None:
-        return mat, names
-
-    # handle conversions
-    if output == 'sparse' and not sp.issparse(mat):
-        mat = sp.csr_matrix(mat)
-    if output == 'dense' and sp.issparse(mat):
-        mat = mat.toarray()
-
-    # return results
-    return mat, names
-
-def design_matrices(y, x=[], fe=[], formula=None, data=None, intercept=True, drop='first', output=None):
+def design_matrices(y, x=[], fe=[], formula=None, data=None, intercept=True, method='sparse', drop='first', output=None):
     if formula is not None:
         y, x, fe, intercept = parse_formula(formula)
-    y_vec = frame_eval(y, data).copy()
-    x_mat, x_names = design_matrix(x=x, fe=fe, data=data, intercept=intercept, drop=drop, output=output)
-    return y_vec, x_mat, x_names
+    y_vec = frame_eval(y, data)
+    x_mat, x_names, c_mat, c_labels = design_matrix(x=x, fe=fe, data=data, intercept=intercept, method=method, drop=drop, output=output)
+    return y_vec, x_mat, x_names, c_mat, c_labels
