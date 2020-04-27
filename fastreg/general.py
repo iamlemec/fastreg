@@ -2,11 +2,12 @@ import jax
 import jax.lax as lax
 import jax.scipy.special as spec
 import jax.numpy as np
-from jax.tree_util import tree_leaves, tree_map, tree_multimap, tree_reduce
+from jax.tree_util import tree_flatten, tree_leaves, tree_map, tree_multimap, tree_reduce
 from jax.interpreters.xla import DeviceArray
 import numpy as np0
 import scipy.sparse as sp
 import pandas as pd
+from operator import and_, add
 
 from .design import design_matrices
 from .summary import param_table
@@ -87,6 +88,9 @@ class DataLoader:
 ## block matrices
 ##
 
+def chunks(v, n):
+    return [v[i:i+n] for i in range(0, len(v), n)]
+
 def atleast_2d(x, axis=0):
     x2 = np.atleast_2d(x)
     if x2.shape[axis] == 1:
@@ -98,26 +102,23 @@ def get_sizes(dms, subset=None):
         subset = list(dms)
     return {k: v.size for k, v in dms.items() if k in subset}
 
-def block_select(dms, sel1=None, sel2=None):
-    if sel1 is None:
-        sel1 = list(dms)
-    if sel2 is None:
-        sel2 = list(dms)
-    return np.block([[atleast_2d(dms[k1][k2], axis=int(i2 < i1)) for i2, k2 in enumerate(dms) if k2 in sel1] for i1, k1 in enumerate(dms) if k1 in sel1])
+def block_matrix(tree, size):
+    blocks = chunks(tree_leaves(tree), size)
+    mat = np.block([[atleast_2d(x, axis=int(i2 < i1)) for i2, x in enumerate(row)] for i1, row in enumerate(blocks)])
+    return mat
 
-def block_unpack(mat, sizes):
-    out = {k: {} for k in sizes}
-    pos = [0] + np0.cumsum(list(sizes.values())).tolist()
-    for i1, k1 in enumerate(sizes):
-        for i2, k2 in enumerate(sizes):
-            out[k1][k2] = np.squeeze(mat[pos[i1]:pos[i1+1],pos[i2]:pos[i2+1]])
-    return out
+def block_unpack(mat, tree, sizes):
+    part = np.cumsum(np.array(sizes))
+    block = lambda x, axis: tree.unflatten(np.split(x, part, axis=axis)[:-1])
+    tree = tree_map(lambda x: block(x, 1), block(mat, 0))
+    return tree
 
 ##
 ## estimation
 ##
 
 # maximum likelihood using jax - this expects a mean log likelihood
+# parameters must be a dictionary of
 def maxlike(model, data, params, c={}, batch_size=4092, epochs=3, learning_rate=0.5, eta=0.001, gamma=0.9, per=100, disp=None, stderr=True):
     # compute derivatives
     vg_fun = jax.jit(jax.value_and_grad(model))
@@ -126,7 +127,13 @@ def maxlike(model, data, params, c={}, batch_size=4092, epochs=3, learning_rate=
 
     # construct dataset
     data = DataLoader(data, batch_size)
-    N = data.data_size
+    N, B = data.data_size, data.num_batches
+
+    # parameter info
+    params = tree_map(np.array, params)
+    par_flat, par_tree = tree_flatten(params)
+    par_sizes = [len(p) if p.ndim > 0 else 1 for p in par_flat]
+    K = len(par_flat)
 
     # track rms gradient
     grms = tree_map(np.zeros_like, params)
@@ -142,8 +149,7 @@ def maxlike(model, data, params, c={}, batch_size=4092, epochs=3, learning_rate=
             loss, grad = vg_fun(params, batch)
 
             lnan = np.isnan(loss)
-            pnan = tree_map(lambda g: np.isnan(g).any(), grad)
-            gnan = tree_reduce(lambda a, b: a & b, pnan)
+            gnan = tree_reduce(and_, tree_map(lambda g: np.isnan(g).any(), grad))
 
             if lnan or gnan:
                 print('Encountered nans!')
@@ -163,44 +169,24 @@ def maxlike(model, data, params, c={}, batch_size=4092, epochs=3, learning_rate=
         if disp is not None:
             disp(ep, avg_loss, params)
 
-    return params, None
+    # just the point estimates
+    if stderr is False:
+        return params, None
 
-    # get hessian matrix (should use pytree)
-    shapes = {k: v.shape for k, v in params.items()}
-    hess = {k1: {k2: np.zeros(v1+v2) for k2, v2 in shapes.items()} for k1, v1 in shapes.items()}
-    for y_bat, x_bat in data:
-        h = h_fun(params, y_bat, x_bat)
-        for k1 in h:
-            for k2 in h:
-                hess[k1][k2] += h[k1][k2]*(batch_size/N)
+    # get hessian matrix
+    hess = tree_multimap(lambda *x: sum(x), *map(lambda b: h_fun(params, b), data))
+    hess = tree_map(lambda x: x/B, hess)
 
-    # get cov matrix
-    if stderr is True:
-        fish = block_select(hess)
-        ifish = -np.linalg.inv(fish)/N
-        sizes = get_sizes(params)
-        sigma = block_unpack(ifish, sizes)
-    elif stderr is None:
-        sigma = N*hess
-    else:
-        # use block diagonal inverse formula
-        # https://en.wikipedia.org/wiki/Invertible_matrix#Blockwise_inversion
-        nocomp = [k for k in params if k not in stderr]
+    # just the hessian itself
+    if stderr == 'hessian':
+        return params, hess
 
-        A = block_select(hess, stderr, stderr)
-        B = block_select(hess, stderr, nocomp)
-        C = block_select(hess, nocomp, stderr)
-        D = block_select(hess, nocomp, nocomp)
+    # invert hessian for stderrs
+    hmat = block_matrix(hess, K)
+    ifish = -np.linalg.inv(hmat)/N
+    sigma = block_unpack(ifish, par_tree, par_sizes)
 
-        A1 = np.linalg.inv(A)
-        Z1 = np.linalg.inv(D - C @ A1 @ B)
-        I1 = A1 + A1 @ B @ Z1 @ C @ A1
-        ifish = -I1/N
-
-        sizes = get_sizes(params, subset=stderr)
-        sigma = block_unpack(ifish, sizes)
-
-    # return to device
+    # full standard errors
     return params, sigma
 
 # default glm specification
@@ -217,28 +203,25 @@ def glm(y, x=[], fe=[], data=None, extra={}, link=None, loss=None, intercept=Tru
     # evaluator
     def model(par, dat):
         ydat, xdat, cdat = dat['ydat'], dat['xdat'], dat['cdat']
-        beta_x, beta_c = par['beta_x'], par['beta_c']
-        linear = xdat @ beta_x
-        for i, c in enumerate(beta_c):
-            linear += beta_c[c][cdat[:, i]]
+        linear = xdat @ par['beta']
+        for i, c in enumerate(c_names):
+            linear += par[c][cdat[:, i]] - par[c][0]
         pred = link(linear)
         like = loss(par, pred, ydat)
         return np.mean(like)
 
     # displayer
     def disp(e, l, p):
-        beta_x, beta_c = p['beta_x'], p['beta_c']
-        c_means = np.array([np.mean(c) for c in beta_c.values()])
-        print(f'[{e:3d}] {l:.4f}: {np.mean(beta_x):.4f} {np.mean(c_means):.4f}')
+        beta = p['beta']
+        print(f'[{e:3d}] {l:.4f}: {np.mean(beta):.4f}')
 
     # estimate model
     data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
     pcateg0 = {c: np.zeros(s) for c, s in zip(c_names, Kl)}
-    params0 = {'beta_x': np.zeros(Kx), 'beta_c': pcateg0, **extra}
-    params, sigma = maxlike(model, data, params0, data, stderr=stderr, disp=disp, **kwargs)
+    params0 = {'beta': np.zeros(Kx), **pcateg0, **extra}
+    beta, sigma = maxlike(model, data, params0, data, stderr=stderr, disp=disp, **kwargs)
 
-    # return relevant
-    return params, sigma
+    return beta, sigma
 
 # logit regression
 def logit(y, x=[], fe=[], data=None, **kwargs):
