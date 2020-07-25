@@ -150,17 +150,13 @@ def block_unpack(mat, tree, sizes):
 ##
 
 # maximum likelihood using jax - this expects a mean log likelihood
-def maxlike(model, data, params, c={}, batch_size=8192, epochs=3, eta=0.01, gamma=0.9, disp=None, stderr=True):
+def maxlike(model, data, params, c={}, batch_size=8192, epochs=3, eta=0.01, gamma=0.9, disp=None, hessian=False, stderr=False):
     # compute derivatives if needed
-    if type(model) is tuple:
-        vg_fun, h_fun = model
-    else:
-        vg_fun = jax.jit(jax.value_and_grad(model))
-        h_fun = jax.jit(jax.hessian(model))
+    vg_fun = jax.jit(jax.value_and_grad(model))
 
     # construct dataset
-    data = DataLoader(data, batch_size)
-    N, B = data.data_size, data.num_batches
+    loader = DataLoader(data, batch_size)
+    N, B = loader.data_size, loader.num_batches
 
     # parameter info
     params = tree_map(np.array, params)
@@ -178,7 +174,7 @@ def maxlike(model, data, params, c={}, batch_size=8192, epochs=3, eta=0.01, gamm
         agg_loss, agg_batch = 0.0, 0
 
         # iterate over batches
-        for b, batch in enumerate(data):
+        for b, batch in enumerate(loader):
             # compute gradients
             loss, grad = vg_fun(params, batch)
 
@@ -203,16 +199,34 @@ def maxlike(model, data, params, c={}, batch_size=8192, epochs=3, eta=0.01, gamm
         if disp is not None:
             disp(ep, avg_loss, params)
 
-    # just the point estimates
-    if stderr is False:
-        return params, None
+    if not hessian:
+        return params
 
     # get hessian matrix
-    hess = tree_multimap(lambda *x: sum(x), *map(lambda b: h_fun(params, b), data))
-    hess = tree_map(lambda x: x/B, hess)
+    if hessian == 'deriv':
+        h_fun = jax.jit(jax.hessian(model))
+        hess = None
+        for b, batch in enumerate(loader):
+            h_batch = h_fun(params, batch)
+            if hess is None:
+                hess = h_batch
+            else:
+                hess = tree_multimap(np.add, hess, h_batch)
+        hess = tree_map(lambda x: x/B, hess)
+    elif hessian == 'outer':
+        tree_axis = tree_map(lambda _: 0, data)
+        vg_fun = jax.jit(jax.vmap(jax.grad(model), (None, tree_axis), 0))
+        hess = None
+        for b, batch in enumerate(loader):
+            vg_batch = vg_fun(params, batch)
+            gg_batch = tree_map(lambda x: tree_map(lambda y: x.T @ y, vg_batch), vg_batch)
+            if hess is None:
+                hess = gg_batch
+            else:
+                hess = tree_multimap(np.add, hess, gg_batch)
+        hess = tree_map(lambda x: -x/N, hess)
 
-    # just the hessian itself
-    if stderr == 'hessian':
+    if not stderr:
         return params, hess
 
     # invert hessian for stderrs
@@ -224,7 +238,7 @@ def maxlike(model, data, params, c={}, batch_size=8192, epochs=3, eta=0.01, gamm
     return params, sigma
 
 # make a glm model and compile
-def glm_model(link, loss):
+def glm_model(link, loss, full=True):
     if type(link) is str:
         link = links[link]
     if type(loss) is str:
@@ -236,16 +250,13 @@ def glm_model(link, loss):
         real, categ = par['real'], par['categ']
         linear = xdat @ real
         for i, c in enumerate(categ):
-            linear += categ[c][cdat[:, i]]
+            cidx = cdat.T[i] # needed for vmap to work
+            linear += categ[c][cidx]
         pred = link(linear)
         like = loss(par, pred, ydat)
         return np.mean(like)
 
-    # compile
-    vg_fun = jax.jit(jax.value_and_grad(model))
-    h_fun = jax.jit(jax.hessian(model))
-
-    return vg_fun, h_fun
+    return model
 
 # default glm specification
 def glm(y, x=[], fe=[], data=None, extra={}, model=None, link=None, loss=None, intercept=True, stderr=True, **kwargs):
