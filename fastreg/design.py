@@ -104,7 +104,10 @@ def frame_eval(exp, data, engine='pandas'):
 def frame_matrix(terms, data):
     if type(terms) is str:
         terms = [terms]
-    return vstack([frame_eval(z, data) for z in terms]).T
+    if len(terms) == 0:
+        return None
+    else:
+        return vstack([frame_eval(z, data) for z in terms]).T
 
 # this is mildly inefficient in the case of overlap
 def encode_categorical(terms, data, method='sparse', drop='first'):
@@ -247,7 +250,7 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, method='sparse', drop=
     # optionally add intercept
     if intercept:
         inter = np.ones((N, 1))
-        x_mat = np.hstack([inter, x_mat]) if x_mat is not None else inter
+        x_mat = hstack([inter, x_mat])
         x_names = ['one'] + x_names
 
     return x_mat, x_names, c_mat, c_labels
