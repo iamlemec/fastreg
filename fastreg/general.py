@@ -155,20 +155,12 @@ def tree_matfun(mat, par, fun):
     return fout
 
 ##
-## estimation
+## optimizers
 ##
 
-# maximum likelihood using jax - this expects a mean log likelihood
-def maxlike(model, data, params, batch_size=8192, epochs=3, eta=0.01, gamma=0.9, disp=None, hessian=False, stderr=False):
-    # compute derivatives if needed
-    vg_fun = jax.jit(jax.value_and_grad(model))
-
-    # construct dataset
-    loader = DataLoader(data, batch_size)
-    N, B = loader.data_size, loader.num_batches
-
+def adam(vg_fun, loader, params0, epochs=3, eta=0.01, gamma=0.9, disp=None):
     # parameter info
-    params = tree_map(np.array, params)
+    params = tree_map(np.array, params0)
 
     # track rms gradient
     grms = tree_map(np.zeros_like, params)
@@ -204,13 +196,15 @@ def maxlike(model, data, params, batch_size=8192, epochs=3, eta=0.01, gamma=0.9,
         if disp is not None:
             disp(ep, avg_loss, params)
 
-    if not hessian:
-        return params
+    return params
 
-    # get hessian matrix
-    if hessian == 'deriv':
+def tree_hessian(model, loader, params, method='deriv'):
+    N, B = loader.data_size, loader.num_batches
+
+    hess = None
+
+    if method == 'deriv':
         h_fun = jax.jit(jax.hessian(model))
-        hess = None
         for b, batch in enumerate(loader):
             h_batch = h_fun(params, batch)
             if hess is None:
@@ -218,10 +212,9 @@ def maxlike(model, data, params, batch_size=8192, epochs=3, eta=0.01, gamma=0.9,
             else:
                 hess = tree_multimap(np.add, hess, h_batch)
         hess = tree_map(lambda x: x/B, hess)
-    elif hessian == 'outer':
-        tree_axis = tree_map(lambda _: 0, data)
+    elif method == 'outer':
+        tree_axis = tree_map(lambda _: 0, loader.data)
         vg_fun = jax.jit(jax.vmap(jax.grad(model), (None, tree_axis), 0))
-        hess = None
         for b, batch in enumerate(loader):
             vg_batch = vg_fun(params, batch)
             gg_batch = tree_map(lambda x: tree_map(lambda y: x.T @ y, vg_batch), vg_batch)
@@ -230,13 +223,39 @@ def maxlike(model, data, params, batch_size=8192, epochs=3, eta=0.01, gamma=0.9,
             else:
                 hess = tree_multimap(np.add, hess, gg_batch)
         hess = tree_map(lambda x: -x/N, hess)
+    else:
+        raise Exception(f'Unknown hessian method: {method}')
+
+    return hess
+
+##
+## estimation
+##
+
+# maximum likelihood using jax - this expects a mean log likelihood
+def maxlike(model, data, params0, hessian=False, stderr=False, optim=adam, batch_size=8192, **kwargs):
+    # compute derivatives if needed
+    vg_fun = jax.jit(jax.value_and_grad(model))
+
+    # construct dataset batching
+    loader = DataLoader(data, batch_size)
+    N, B = loader.data_size, loader.num_batches
+
+    # maximize likelihood
+    params = optim(vg_fun, loader, params0, **kwargs)
+
+    if not hessian:
+        return params
+
+    # get model hessian
+    hess = tree_hessian(model, loader, params, method=hessian)
 
     if not stderr:
         return params, hess
 
     # invert fisher matrix
-    ifunc = lambda m: -inv_fun(m)/N
-    sigma = tree_matfun(hess, params, ifunc)
+    fish = tree_matfun(hess, params, inv_fun)
+    sigma = tree_map(lambda x: -x/N, fish)
 
     return params, sigma
 
