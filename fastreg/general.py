@@ -129,11 +129,6 @@ def atleast_2d(x, axis=0):
         x2 = x2.T
     return x2
 
-def get_sizes(dms, subset=None):
-    if subset is None:
-        subset = list(dms)
-    return {k: v.size for k, v in dms.items() if k in subset}
-
 def block_matrix(tree, dims, size):
     blocks = chunks(tree_leaves(tree), size)
     mat = np.block([[atleast_2d(x, axis=int(d>0)) for d, x in zip(dims, row)] for row in blocks])
@@ -145,12 +140,26 @@ def block_unpack(mat, tree, sizes):
     tree = tree_map(lambda x: block(x, 1), block(mat, 0))
     return tree
 
+def tree_matfun(mat, par, fun):
+    # get param configuration
+    par_flat, par_tree = tree_flatten(par)
+    par_sizs = [np.size(p) for p in par_flat]
+    par_dims = [np.ndim(p) for p in par_flat]
+    K = len(par_flat)
+
+    # invert hessian for stderrs
+    tmat = block_matrix(mat, par_dims, K)
+    fmat = fun(tmat)
+    fout = block_unpack(fmat, par_tree, par_sizs)
+
+    return fout
+
 ##
 ## estimation
 ##
 
 # maximum likelihood using jax - this expects a mean log likelihood
-def maxlike(model, data, params, c={}, batch_size=8192, epochs=3, eta=0.01, gamma=0.9, disp=None, hessian=False, stderr=False):
+def maxlike(model, data, params, batch_size=8192, epochs=3, eta=0.01, gamma=0.9, disp=None, hessian=False, stderr=False):
     # compute derivatives if needed
     vg_fun = jax.jit(jax.value_and_grad(model))
 
@@ -160,10 +169,6 @@ def maxlike(model, data, params, c={}, batch_size=8192, epochs=3, eta=0.01, gamm
 
     # parameter info
     params = tree_map(np.array, params)
-    par_flat, par_tree = tree_flatten(params)
-    par_sizes = [len(p) if p.ndim > 0 else 1 for p in par_flat]
-    par_dims = [np.ndim(p) for p in par_flat]
-    K = len(par_flat)
 
     # track rms gradient
     grms = tree_map(np.zeros_like, params)
@@ -229,12 +234,10 @@ def maxlike(model, data, params, c={}, batch_size=8192, epochs=3, eta=0.01, gamm
     if not stderr:
         return params, hess
 
-    # invert hessian for stderrs
-    hmat = block_matrix(hess, par_dims, K)
-    ifish = -inv_fun(hmat)/N
-    sigma = block_unpack(ifish, par_tree, par_sizes)
+    # invert fisher matrix
+    ifunc = lambda m: -inv_fun(m)/N
+    sigma = tree_matfun(hess, params, ifunc)
 
-    # full standard errors
     return params, sigma
 
 # make a glm model and compile
@@ -283,7 +286,7 @@ def glm(y, x=[], fe=[], data=None, extra={}, model=None, link=None, loss=None, i
     data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
     pcateg0 = {c: np.zeros(s) for c, s in zip(c_names, Kl)}
     params0 = {'real': np.zeros(Kx), 'categ': pcateg0, **extra}
-    beta, sigma = maxlike(model, data, params0, data, stderr=stderr, disp=disp, **kwargs)
+    beta, sigma = maxlike(model, data, params0, stderr=stderr, disp=disp, **kwargs)
 
     return beta, sigma
 
