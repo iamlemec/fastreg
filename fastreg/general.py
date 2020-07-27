@@ -140,7 +140,8 @@ def block_unpack(mat, tree, sizes):
     tree = tree_map(lambda x: block(x, 1), block(mat, 0))
     return tree
 
-def tree_matfun(mat, par, fun):
+# we need par to know the inner shape
+def tree_matfun(fun, mat, par):
     # get param configuration
     par_flat, par_tree = tree_flatten(par)
     par_sizs = [np.size(p) for p in par_flat]
@@ -153,6 +154,19 @@ def tree_matfun(mat, par, fun):
     fout = block_unpack(fmat, par_tree, par_sizs)
 
     return fout
+
+def tree_batch_reduce(batch_fun, loader, agg_fun=np.add):
+    total = None
+    for b, batch in enumerate(loader):
+        f_batch = batch_fun(batch)
+        if total is None:
+            total = f_batch
+        else:
+            total = tree_multimap(agg_fun, total, f_batch)
+    return total
+
+def tree_outer(tree):
+    return tree_map(lambda x: tree_map(lambda y: x.T @ y, tree), tree)
 
 ##
 ## optimizers
@@ -198,30 +212,17 @@ def adam(vg_fun, loader, params0, epochs=3, eta=0.01, gamma=0.9, disp=None):
 
     return params
 
-def tree_hessian(model, loader, params, method='deriv'):
+def tree_hessian(model, params, loader, method='deriv'):
     N, B = loader.data_size, loader.num_batches
-
-    hess = None
 
     if method == 'deriv':
         h_fun = jax.jit(jax.hessian(model))
-        for b, batch in enumerate(loader):
-            h_batch = h_fun(params, batch)
-            if hess is None:
-                hess = h_batch
-            else:
-                hess = tree_multimap(np.add, hess, h_batch)
+        hess = tree_batch_reduce(lambda b: h_fun(params, b), loader)
         hess = tree_map(lambda x: x/B, hess)
     elif method == 'outer':
         tree_axis = tree_map(lambda _: 0, loader.data)
         vg_fun = jax.jit(jax.vmap(jax.grad(model), (None, tree_axis), 0))
-        for b, batch in enumerate(loader):
-            vg_batch = vg_fun(params, batch)
-            gg_batch = tree_map(lambda x: tree_map(lambda y: x.T @ y, vg_batch), vg_batch)
-            if hess is None:
-                hess = gg_batch
-            else:
-                hess = tree_multimap(np.add, hess, gg_batch)
+        hess = tree_batch_reduce(lambda b: tree_outer(vg_fun(params, b)), loader)
         hess = tree_map(lambda x: -x/N, hess)
     else:
         raise Exception(f'Unknown hessian method: {method}')
@@ -233,28 +234,27 @@ def tree_hessian(model, loader, params, method='deriv'):
 ##
 
 # maximum likelihood using jax - this expects a mean log likelihood
-def maxlike(model, data, params0, hessian=False, stderr=False, optim=adam, batch_size=8192, **kwargs):
-    # compute derivatives if needed
-    vg_fun = jax.jit(jax.value_and_grad(model))
-
-    # construct dataset batching
-    loader = DataLoader(data, batch_size)
+def maxlike(model=None, params=None, data=None, vg_fun=None, loader=None, hessian=False, stderr=False, optim=adam, batch_size=8192, **kwargs):
+    if vg_fun is None:
+        vg_fun = jax.jit(jax.value_and_grad(model))
+    if loader is None:
+        loader = DataLoader(data, batch_size)
     N, B = loader.data_size, loader.num_batches
 
     # maximize likelihood
-    params = optim(vg_fun, loader, params0, **kwargs)
+    params = optim(vg_fun, loader, params, **kwargs)
 
     if not hessian:
         return params
 
     # get model hessian
-    hess = tree_hessian(model, loader, params, method=hessian)
+    hess = tree_hessian(model, params, loader, method=hessian)
 
     if not stderr:
         return params, hess
 
     # invert fisher matrix
-    fish = tree_matfun(hess, params, inv_fun)
+    fish = tree_matfun(inv_fun, hess, params)
     sigma = tree_map(lambda x: -x/N, fish)
 
     return params, sigma
@@ -281,7 +281,7 @@ def glm_model(link, loss, full=True):
     return model
 
 # default glm specification
-def glm(y, x=[], fe=[], data=None, extra={}, model=None, link=None, loss=None, intercept=True, stderr=True, **kwargs):
+def glm(y, x=[], fe=[], hd=None, data=None, extra={}, model=None, link=None, loss=None, intercept=True, stderr=True, **kwargs):
     # construct design matrices
     y_vec, x_mat, x_names, c_mat, c_names = design_matrices(y, x=x, fe=fe, data=data, intercept=intercept, method='ordinal')
 
@@ -301,11 +301,76 @@ def glm(y, x=[], fe=[], data=None, extra={}, model=None, link=None, loss=None, i
         mcats = np.array([np.mean(c) for c in categ.values()])
         print(f'[{e:3d}] {l:.4f}: {np.mean(real):.4f} {np.mean(mcats):.4f}')
 
-    # estimate model
+    # organize data
     data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
+
+    # initial parameter guesses
     pcateg0 = {c: np.zeros(s) for c, s in zip(c_names, Kl)}
     params0 = {'real': np.zeros(Kx), 'categ': pcateg0, **extra}
-    beta, sigma = maxlike(model, data, params0, stderr=stderr, disp=disp, **kwargs)
+
+    # estimate model
+    return maxlike(model=model, params=params0, data=data, stderr=stderr, disp=disp, **kwargs)
+
+# default glm specification
+def glm_hd(y, x=[], fe=[], data=None, extra={}, model=None, link=None, loss=None, intercept=True, stderr_batch=1024, backend='gpu', **kwargs):
+    if len(fe) > 1:
+        raise Exception('Can\'t handle more than one FE right now')
+    hd, = fe
+
+    # construct design matrices
+    y_vec, x_mat, x_names, c_mat, c_names = design_matrices(y, x=x, fe=fe, data=data, intercept=intercept, method='ordinal')
+
+    # get data shape
+    N = len(y_vec)
+    Kx = len(x_names)
+    Kc = len(c_names)
+    Kl = [len(c) for c in c_names.values()]
+
+    # compile model if needed
+    if model is None:
+        model = glm_model(link, loss)
+
+    # displayer
+    def disp(e, l, p):
+        real, categ = p['real'], p['categ']
+        mcats = np.array([np.mean(c) for c in categ.values()])
+        print(f'[{e:3d}] {l:.4f}: {np.mean(real):.4f} {np.mean(mcats):.4f}')
+
+    # construct dataset batching
+    data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
+
+    # initial parameter guesses
+    pcateg0 = {c: np.zeros(s) for c, s in zip(c_names, Kl)}
+    params0 = {'real': np.zeros(Kx), 'categ': pcateg0, **extra}
+
+    # estimate model
+    beta = maxlike(model=model, params=params0, data=data, hessian=False, stderr=False, disp=disp, **kwargs)
+
+    # get vectorized gradient
+    tree_axis = tree_map(lambda _: 0, data)
+    vg_fun = jax.jit(jax.vmap(jax.grad(model), (None, tree_axis), 0), backend=backend)
+
+    # aggregate with diagonal D
+    def batch_fun(batch):
+        grads = vg_fun(beta, batch)
+        R, C = grads['real'], grads['categ'][hd]
+        return [
+            R.T @ R,
+            R.T @ C,
+            C.T @ R,
+            np.sum(C*C, axis=0)
+        ]
+
+    # compute hessian blocks
+    loader = DataLoader(data, stderr_batch)
+    A, B, C, d = tree_batch_reduce(batch_fun, loader)
+    d1 = 1/d
+    d1l, d1r = d1[:, None], d1[None, :]
+
+    # use block inverse formula
+    rsig = inv_fun(A - (B*d1r) @ C)
+    csig = d1 + np.sum((d1l*C)*(rsig @ (B*d1r)).T, axis=1)
+    sigma = {'real': rsig, 'categ': csig}
 
     return beta, sigma
 
