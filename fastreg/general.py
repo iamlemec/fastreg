@@ -252,7 +252,7 @@ def tree_outer_flat(tree):
 # maximum likelihood using jax - this expects a mean log likelihood
 # the assumes the data is batchable, which usually means panel-like
 # a toplevel hdfe variable is treated special-like
-def maxlike(model=None, params=None, data=None, vg_fun=None, hessian='outer', stderr=False, optim=adam, batch_size=8192, batch_stderr=1024, backend='gpu', **kwargs):
+def maxlike(model=None, params=None, data=None, vg_fun=None, hessian='outer', stderr=False, optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs):
     if vg_fun is None:
         vg_fun = jax.jit(jax.value_and_grad(model))
 
