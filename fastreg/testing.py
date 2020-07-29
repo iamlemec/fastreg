@@ -36,6 +36,7 @@ def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
     # predictors
     df['yhat0'] = c['one'] + c['x1']*df['x1'] + c['x2']*df['x2']
     df['yhat'] = df['yhat0'] + c['id1']*df['id1']/K1 + c['id2']*df['id2']/K2
+    df['yhat1'] = df['yhat0'] + c['id1']*df['id1']/K1
 
     # linear
     df['y0'] = df['yhat0'] + c['sigma']*st.randn(N)
@@ -50,8 +51,10 @@ def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
     # poisson
     df['Ep0'] = np.exp(df['yhat0'])
     df['Ep'] = np.exp(df['yhat'])
+    df['Ep1'] = np.exp(df['yhat1'])
     df['p0'] = st.poisson(df['Ep0'])
     df['p'] = st.poisson(df['Ep'])
+    df['p1'] = st.poisson(df['Ep1'])
 
     # zero-inflated poisson
     df['pz0'] = np.where(st.rand(N) < c['pz'], 0, df['p0'])
