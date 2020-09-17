@@ -18,6 +18,7 @@ from .summary import param_table
 
 # numbers
 eps = 1e-7
+pi = np.pi
 clip_like = 20.0
 
 # polygamma functions
@@ -368,41 +369,47 @@ def glm(y, x=[], fe=[], hdfe=None, data=None, extra={}, model=None, link=None, l
     return beta, sigma
 
 # logit regression
-logit_model = glm_model(link='logit', loss='binary')
 def logit(y, x=[], fe=[], data=None, **kwargs):
-    return glm(y, x=x, fe=fe, data=data, model=logit_model, **kwargs)
+    return glm(y, x=x, fe=fe, data=data, link='logit', loss='binary', **kwargs)
 
 # poisson regression
-poisson_model = glm_model(link='exp', loss='poisson')
 def poisson(y, x=[], fe=[], data=None, **kwargs):
-    return glm(y, x=x, fe=fe, data=data, model=poisson_model, **kwargs)
+    return glm(y, x=x, fe=fe, data=data, link='exp', loss='poisson', **kwargs)
 
 # zero inflated poisson regression
-zinf_poisson_model = glm_model(link='exp', loss=zero_inflate(losses['poisson']))
 def zinf_poisson(y, x=[], fe=[], data=None, **kwargs):
-    extra = {'lpzero': 0.0}
-    return glm(y, x=x, fe=fe, data=data, model=zinf_poisson_model, extra=extra, **kwargs)
+    return glm(
+        y, x=x, fe=fe, data=data,
+        link='exp', loss=zero_inflate(losses['poisson']),
+        extra={'lpzero': 0.0}, **kwargs
+    )
 
 # negative binomial regression
-negbin_model = glm_model(link='exp', loss='negbin')
 def negbin(y, x=[], fe=[], data=None, **kwargs):
-    extra = {'lr': 0.0}
-    return glm(y, x=x, fe=fe, data=data, model=negbin_model, extra=extra, **kwargs)
+    return glm(
+        y, x=x, fe=fe, data=data,
+        link='exp', loss='negbin',
+        extra={'lr': 0.0}, **kwargs
+    )
 
 # zero inflated poisson regression
-zinf_negbin_model = glm_model(link='exp', loss=zero_inflate(losses['negbin']))
 def zinf_negbin(y, x=[], fe=[], data=None, **kwargs):
-    extra = {'lpzero': 0.0, 'lr': 0.0}
-    return glm(y, x=x, fe=fe, data=data, model=zinf_negbin_model, extra=extra, **kwargs)
+    return glm(
+        y, x=x, fe=fe, data=data,
+        link='exp', loss=zero_inflate(losses['negbin']),
+        extra={'lpzero': 0.0, 'lr': 0.0}, **kwargs
+    )
 
 # ordinary least squares (just for kicks)
 def ols_loss(p, yh, y):
-    lsigma = p['lsigma2']
+    lsigma2 = p['lsigma2']
     sigma2 = np.exp(lsigma2)
     like = -lsigma2 + lstsq_loss(yh, y)/sigma2
     return like
 
-ols_model = glm_model(link='ident', loss=ols_loss)
 def ols(y, x=[], fe=[], data=None, **kwargs):
-    extra = {'lsigma': 0.0}
-    return glm(y, x=x, fe=fe, data=data, model=ols_model, extra=extra, **kwargs)
+    return glm(
+        y, x=x, fe=fe, data=data,
+        link='ident', loss=ols_loss,
+        extra={'lsigma2': 0.0}, **kwargs
+    )

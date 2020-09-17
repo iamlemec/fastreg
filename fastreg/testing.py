@@ -21,17 +21,23 @@ pfact = 100
 def rand_negbin(mean, alpha, size=None, state=np.random):
     return state.negative_binomial(1/alpha, 1/(1+alpha*mean), size=size)
 
-def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
+def dataset(N=1_000_000, K1=10, K2=100, models=[], seed=89320432):
+    if type(models) is str:
+        models = [models]
+
     # init random
     st = np.random.RandomState(seed)
 
     # core regressors
     df = pd.DataFrame({
-        'id1': st.randint(K1, size=N),
-        'id2': st.randint(K2, size=N),
+        'id1': np.arange(N) // 1000,
+        'id2': np.sqrt(np.arange(N)).astype(np.int),
         'x1': st.randn(N),
         'x2': st.randn(N)
     })
+
+    K1 = df['id1'].max()
+    K2 = df['id2'].max()
 
     # predictors
     df['yhat0'] = c['one'] + c['x1']*df['x1'] + c['x2']*df['x2']
@@ -39,34 +45,40 @@ def dataset(N=1_000_000, K1=10, K2=100, seed=89320432):
     df['yhat1'] = df['yhat0'] + c['id1']*df['id1']/K1
 
     # linear
-    df['y0'] = df['yhat0'] + c['sigma']*st.randn(N)
-    df['y'] = df['yhat'] + c['sigma']*st.randn(N)
+    if 'linear' in models:
+        df['y0'] = df['yhat0'] + c['sigma']*st.randn(N)
+        df['y'] = df['yhat'] + c['sigma']*st.randn(N)
 
     # logit
-    df['Eb0'] = 1/(1+np.exp(-df['yhat0']))
-    df['Eb'] = 1/(1+np.exp(-df['yhat']))
-    df['b0'] = (st.randn(N) < df['Eb0']).astype(np.int)
-    df['b'] = (st.randn(N) < df['Eb']).astype(np.int)
+    if 'logit' in models:
+        df['Eb0'] = 1/(1+np.exp(-df['yhat0']))
+        df['Eb'] = 1/(1+np.exp(-df['yhat']))
+        df['b0'] = (st.randn(N) < df['Eb0']).astype(np.int)
+        df['b'] = (st.randn(N) < df['Eb']).astype(np.int)
 
     # poisson
-    df['Ep0'] = np.exp(df['yhat0'])
-    df['Ep'] = np.exp(df['yhat'])
-    df['Ep1'] = np.exp(df['yhat1'])
-    df['p0'] = st.poisson(df['Ep0'])
-    df['p'] = st.poisson(df['Ep'])
-    df['p1'] = st.poisson(df['Ep1'])
+    if 'poisson' in models:
+        df['Ep0'] = np.exp(df['yhat0'])
+        df['Ep'] = np.exp(df['yhat'])
+        df['Ep1'] = np.exp(df['yhat1'])
+        df['p0'] = st.poisson(df['Ep0'])
+        df['p'] = st.poisson(df['Ep'])
+        df['p1'] = st.poisson(df['Ep1'])
 
     # zero-inflated poisson
-    df['pz0'] = np.where(st.rand(N) < c['pz'], 0, df['p0'])
-    df['pz'] = np.where(st.rand(N) < c['pz'], 0, df['p'])
+    if 'zinf-poisson' in models:
+        df['pz0'] = np.where(st.rand(N) < c['pz'], 0, df['p0'])
+        df['pz'] = np.where(st.rand(N) < c['pz'], 0, df['p'])
 
     # negative binomial
-    df['nb0'] = rand_negbin(df['Ep0'], c['alpha'], state=st)
-    df['nb'] = rand_negbin(df['Ep'], c['alpha'], state=st)
+    if 'negbin' in models:
+        df['nb0'] = rand_negbin(df['Ep0'], c['alpha'], state=st)
+        df['nb'] = rand_negbin(df['Ep'], c['alpha'], state=st)
 
     # zero-inflated poisson
-    df['nbz0'] = np.where(st.rand(N) < c['pz'], 0, df['nb0'])
-    df['nbz'] = np.where(st.rand(N) < c['pz'], 0, df['nb'])
+    if 'zinf-negbin' in models:
+        df['nbz0'] = np.where(st.rand(N) < c['pz'], 0, df['nb0'])
+        df['nbz'] = np.where(st.rand(N) < c['pz'], 0, df['nb'])
 
     return df
 
