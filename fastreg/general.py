@@ -247,46 +247,6 @@ def adam(vg_fun, loader, params0, epochs=3, eta=0.01, gamma=0.9, disp=None):
 
     return params
 
-def adam_constr(vg_fun, hj_fun, loader, params0, epochs=3, eta=0.01, gamma=0.9, disp=None):
-    # parameter info
-    params = tree_map(np.array, params0)
-
-    # track rms gradient
-    grms = tree_map(np.zeros_like, params)
-
-    # do training
-    for ep in range(epochs):
-        # epoch stats
-        agg_loss, agg_batch = 0.0, 0
-
-        # iterate over batches
-        for b, batch in enumerate(loader):
-            # compute gradients
-            loss, grad = vg_fun(params, batch)
-
-            lnan = np.isnan(loss)
-            gnan = tree_reduce(and_, tree_map(lambda g: np.isnan(g).any(), grad))
-
-            if lnan or gnan:
-                print('Encountered nans!')
-                return params, None
-
-            grms = tree_multimap(lambda r, g: gamma*r + (1-gamma)*g**2, grms, grad)
-            params = tree_multimap(lambda p, g, r: p + eta*g/np.sqrt(r+eps), params, grad, grms)
-
-            # compute statistics
-            agg_loss += loss
-            agg_batch += 1
-
-        # display stats
-        avg_loss = agg_loss/agg_batch
-
-        # display output
-        if disp is not None:
-            disp(ep, avg_loss, params)
-
-    return params
-
 ##
 ## estimation
 ##
@@ -303,9 +263,9 @@ def tree_outer_flat(tree):
     return A, B, C, d
 
 # maximum likelihood using jax - this expects a mean log likelihood
-def maxlike(model=None, params=None, data=None, hessian='outer', stderr=False, optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs):
-    vg_fun = jax.jit(jax.value_and_grad(model))
-    h_fun = jax.jit(jax.hessian(model))
+def maxlike(model=None, params=None, data=None, stderr=False, optim=adam, backend='gpu', **kwargs):
+    # get model gradients
+    vg_fun = jax.jit(jax.value_and_grad(model), backend=backend)
 
     # simple non-batched loader
     loader = OneLoader(data)
@@ -317,11 +277,14 @@ def maxlike(model=None, params=None, data=None, hessian='outer', stderr=False, o
         return params1, None
 
     # get model hessian
-    hess = h_fun(params, data, method='deriv')
-    fish = tree_matfun(inv_fun, hess, params)
-    sigma = tree_map(lambda x: -x/N, fish)
+    h_fun = jax.jit(jax.hessian(model), backend=backend)
 
-    return params1, sigma
+    # compute standard errors
+    hess = h_fun(params, data)
+    fish = tree_matfun(inv_fun, hess, params)
+    omega = tree_map(lambda x: -x, fish)
+
+    return params1, omega
 
 # maximum likelihood using jax - this expects a mean log likelihood
 # the assumes the data is batchable, which usually means panel-like
