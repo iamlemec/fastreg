@@ -30,14 +30,11 @@ def dataset(N=1_000_000, K1=10, K2=100, models=[], seed=89320432):
 
     # core regressors
     df = pd.DataFrame({
-        'id1': np.arange(N) // 1000,
-        'id2': np.sqrt(np.arange(N)).astype(np.int),
+        'id1': st.randint(K1, size=N),
+        'id2': st.randint(K2, size=N),
         'x1': st.randn(N),
         'x2': st.randn(N)
     })
-
-    K1 = df['id1'].max()
-    K2 = df['id2'].max()
 
     # predictors
     df['yhat0'] = c['one'] + c['x1']*df['x1'] + c['x2']*df['x2']

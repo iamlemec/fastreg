@@ -251,13 +251,18 @@ def design_matrix(x=[], fe=[], data=None, intercept=True, method='sparse', drop=
     if intercept:
         inter = np.ones((N, 1))
         x_mat = hstack([inter, x_mat])
-        x_names = ['one'] + x_names
+        x_names = ['Intercept'] + x_names
 
     return x_mat, x_names, c_mat, c_labels
 
-def design_matrices(y, x=[], fe=[], formula=None, data=None, intercept=True, method='sparse', drop='first', output=None):
+def design_formula(formula, data=None):
+
+
+def design_termlist(y, x=[], fe=[], formula=None, data=None, intercept=True, method='sparse', drop='first', output=None):
+    # use formulaic for formulas
     if formula is not None:
         y, x, fe, intercept = parse_formula(formula)
+
     y_vec = frame_eval(y, data)
     x_mat, x_names, c_mat, c_labels = design_matrix(x=x, fe=fe, data=data, intercept=intercept, method=method, drop=drop, output=output)
     return y_vec, x_mat, x_names, c_mat, c_labels

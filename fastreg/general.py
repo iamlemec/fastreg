@@ -115,6 +115,16 @@ class DataLoader:
         for i in range(0, round_size, batch_size):
             yield tree_map(lambda d: d[i:i+batch_size], self.data)
 
+class OneLoader:
+    def __init__(self, data, batch_size=None):
+        self.data = data
+
+    def __iter__(self):
+        yield from self.iterate()
+
+    def iterate(self):
+        yield self.data
+
 ##
 ## block matrices
 ##
@@ -237,12 +247,54 @@ def adam(vg_fun, loader, params0, epochs=3, eta=0.01, gamma=0.9, disp=None):
 
     return params
 
+def adam_constr(vg_fun, hj_fun, loader, params0, epochs=3, eta=0.01, gamma=0.9, disp=None):
+    # parameter info
+    params = tree_map(np.array, params0)
+
+    # track rms gradient
+    grms = tree_map(np.zeros_like, params)
+
+    # do training
+    for ep in range(epochs):
+        # epoch stats
+        agg_loss, agg_batch = 0.0, 0
+
+        # iterate over batches
+        for b, batch in enumerate(loader):
+            # compute gradients
+            loss, grad = vg_fun(params, batch)
+
+            lnan = np.isnan(loss)
+            gnan = tree_reduce(and_, tree_map(lambda g: np.isnan(g).any(), grad))
+
+            if lnan or gnan:
+                print('Encountered nans!')
+                return params, None
+
+            grms = tree_multimap(lambda r, g: gamma*r + (1-gamma)*g**2, grms, grad)
+            params = tree_multimap(lambda p, g, r: p + eta*g/np.sqrt(r+eps), params, grad, grms)
+
+            # compute statistics
+            agg_loss += loss
+            agg_batch += 1
+
+        # display stats
+        avg_loss = agg_loss/agg_batch
+
+        # display output
+        if disp is not None:
+            disp(ep, avg_loss, params)
+
+    return params
+
 ##
 ## estimation
 ##
 
 def tree_outer_flat(tree):
     tree1, vec = popoff(tree, 'hdfe')
+    # print([m.shape for m in tree_leaves(tree1)])
+    print(tree1)
     mat = np.hstack(tree_leaves(tree1))
     A = mat.T @ mat
     B = mat.T @ vec
@@ -251,9 +303,30 @@ def tree_outer_flat(tree):
     return A, B, C, d
 
 # maximum likelihood using jax - this expects a mean log likelihood
+def maxlike(model=None, params=None, data=None, hessian='outer', stderr=False, optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs):
+    vg_fun = jax.jit(jax.value_and_grad(model))
+    h_fun = jax.jit(jax.hessian(model))
+
+    # simple non-batched loader
+    loader = OneLoader(data)
+
+    # maximize likelihood
+    params1 = optim(vg_fun, loader, params, **kwargs)
+
+    if not stderr:
+        return params1, None
+
+    # get model hessian
+    hess = h_fun(params, data, method='deriv')
+    fish = tree_matfun(inv_fun, hess, params)
+    sigma = tree_map(lambda x: -x/N, fish)
+
+    return params1, sigma
+
+# maximum likelihood using jax - this expects a mean log likelihood
 # the assumes the data is batchable, which usually means panel-like
 # a toplevel hdfe variable is treated special-like
-def maxlike(model=None, params=None, data=None, vg_fun=None, hessian='outer', stderr=False, optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs):
+def maxlike_panel(model=None, params=None, data=None, vg_fun=None, hessian='outer', stderr=False, optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs):
     if vg_fun is None:
         vg_fun = jax.jit(jax.value_and_grad(model))
 
@@ -360,7 +433,7 @@ def glm(y, x=[], fe=[], hdfe=None, data=None, extra={}, model=None, link=None, l
         params['hdfe'] = params['categ'].pop(hdfe)
 
     # estimate model
-    beta, sigma = maxlike(model=model, params=params, data=data, stderr=stderr, disp=disp, **kwargs)
+    beta, sigma = maxlike_panel(model=model, params=params, data=data, stderr=stderr, disp=disp, **kwargs)
 
     if hdfe is not None:
         beta['categ'][hdfe] = beta.pop('hdfe')
