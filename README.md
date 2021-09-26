@@ -19,24 +19,36 @@ Optionally, for the maximum likelihood routines, you'll need `jax` (and `jaxlib`
 
 ### Usage
 
+First import the necessary functions
+``` python
+import fastreg.linear as fr
+import fastreg.testing as test
+from fastreg.design import C
+```
+
+Create some testing data
+``` python
+data = test.dataset(N=100_000, K1=10, K2=100, models='linear')
+```
+
 Regress `y` on `x1` and `x2` given `pandas` DataFrame `data`:
 ``` python
-linear.ols(y='y', x=['x1', 'x2'], data=data)
+fr.ols(y='y', x=['x1', 'x2'], data=data)
 ```
 
 Regress `y` on `x1`, `x2`, categorical `id1`, and categorical `id2`:
 ``` python
-linear.ols(y='y', x=['x1', 'x2'], fe=['id1', 'id2'], data=data)
+fr.ols(y='y', x=['x1', 'x2', C('id1'), C('id2')], data=data)
 ```
 
-Regress `y` on `x1`, `x2`, categorical `id1`, and all combinations of categoricals `id2` and `id3`:
+Regress `y` on `x1`, `x2`, and all combinations of categoricals `id1` and `id2`:
 ``` python
-linear.ols(y='y', x=['x1', 'x2'], fe=['id1', ('id2', 'id3')], data=data)
+fr.ols(y='y', x=['x1', 'x2', (C('id1'), C('id2'))], data=data)
 ```
 
-Instead of passing `y`, `x`, and `fe`, you can also pass an R-style formula string to `formula`, as in:
+Instead of passing `y` and `x`, you can also pass an R-style formula string to `formula`, as in:
 ``` python
-linear.ols(formula='y ~ x1 + x2 + C(id1) + C(id2)', data=data)
+fr.ols(formula='y ~ x1 + x2 + C(id1) + C(id2)', data=data)
 ```
 Right now, coding schemes other than treatment and mixing continuous and categorical variables in one term are not supported.
 
@@ -44,4 +56,4 @@ You can pass a list of column names to `cluster` to cluster standard errors on t
 
 ### Experimental
 
-There's a maximum likelihood estimation routine in `general.py` called `maxlike`. Just give this a function that computes the mean log likelihood and it'll take care of the rest. This is then specialized into a generalized linear model routine called `glm`, which accepts link and loss functions along with data. I've provided implementations for `logit`, `poisson`, `zero_inflated_poisson`, `negative_binomial`, and `ordinary_least_squares`. These all use the same syntax as `linear.ols`.
+There's a maximum likelihood estimation routine in `general.py` called `maxlike`. Just give this a function that computes the mean log likelihood and it'll take care of the rest. This is then specialized into a generalized linear model routine called `glm`, which accepts link and loss functions along with data. I've provided implementations for `logit`, `poisson`, `negbin`, `zinf_poisson`, `zinf_negbin`, and `ols`. These all use the same syntax as `linear.ols`.

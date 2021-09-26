@@ -1,15 +1,18 @@
 import jax
 import jax.lax as lax
-import jax.scipy.special as spec
+from jax.scipy.special import gammaln
 import jax.numpy as np
-from jax.tree_util import tree_flatten, tree_leaves, tree_map, tree_multimap, tree_reduce, tree_structure
+from jax.tree_util import (
+    tree_flatten, tree_leaves, tree_map, tree_multimap, tree_reduce,
+    tree_structure
+)
 from jax.interpreters.xla import DeviceArray
 import numpy as np0
 import scipy.sparse as sp
 import pandas as pd
 from operator import and_, add
 
-from .design import design_matrices
+from .design import design_matrices, C
 from .summary import param_table
 
 ##
@@ -18,24 +21,6 @@ from .summary import param_table
 
 # numbers
 eps = 1e-7
-pi = np.pi
-clip_like = 20.0
-
-# polygamma functions
-@jax.custom_transforms
-def trigamma(x):
-    return 1/x + 1/(2*x**2) + 1/(6*x**3) - 1/(30*x**5) + 1/(42*x**7) - 1/(30*x**9) + 5/(66*x**11) - 691/(2730*x**13) + 7/(6*x**15)
-
-@jax.custom_transforms
-def digamma(x):
-    return spec.digamma(x)
-
-@jax.custom_transforms
-def gammaln(x):
-    return spec.gammaln(x)
-
-jax.defjvp(digamma, lambda g, y, x: lax.mul(g, trigamma(x)))
-jax.defjvp(gammaln, lambda g, y, x: lax.mul(g, digamma(x)))
 
 ##
 ## precompile
@@ -81,7 +66,7 @@ losses = {
 }
 
 # modifiers
-def zero_inflate(like0, key='lpzero'):
+def zero_inflate(like0, clip_like=20.0, key='lpzero'):
     def like(p, yh, y):
         pzero = sigmoid(p[key])
         clike = np.clip(like0(p, yh, y), a_max=clip_like)
@@ -207,7 +192,7 @@ def tree_hessian(model, params, loader, method='deriv', batch_size=1024):
 ## optimizers
 ##
 
-def adam(vg_fun, loader, params0, epochs=3, eta=0.01, gamma=0.9, disp=None):
+def adam(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, disp=None):
     # parameter info
     params = tree_map(np.array, params0)
 
@@ -253,8 +238,6 @@ def adam(vg_fun, loader, params0, epochs=3, eta=0.01, gamma=0.9, disp=None):
 
 def tree_outer_flat(tree):
     tree1, vec = popoff(tree, 'hdfe')
-    # print([m.shape for m in tree_leaves(tree1)])
-    print(tree1)
     mat = np.hstack(tree_leaves(tree1))
     A = mat.T @ mat
     B = mat.T @ vec
@@ -263,7 +246,9 @@ def tree_outer_flat(tree):
     return A, B, C, d
 
 # maximum likelihood using jax - this expects a mean log likelihood
-def maxlike(model=None, params=None, data=None, stderr=False, optim=adam, backend='gpu', **kwargs):
+def maxlike(
+    model=None, params=None, data=None, stderr=False, optim=adam, backend='gpu', **kwargs
+):
     # get model gradients
     vg_fun = jax.jit(jax.value_and_grad(model), backend=backend)
 
@@ -289,7 +274,10 @@ def maxlike(model=None, params=None, data=None, stderr=False, optim=adam, backen
 # maximum likelihood using jax - this expects a mean log likelihood
 # the assumes the data is batchable, which usually means panel-like
 # a toplevel hdfe variable is treated special-like
-def maxlike_panel(model=None, params=None, data=None, vg_fun=None, hessian='outer', stderr=False, optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs):
+def maxlike_panel(
+    model=None, params=None, data=None, vg_fun=None, hessian='outer', stderr=False,
+    optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs
+):
     if vg_fun is None:
         vg_fun = jax.jit(jax.value_and_grad(model))
 
@@ -357,14 +345,22 @@ def glm_model(link, loss, hdfe=None):
     return model
 
 # default glm specification
-def glm(y, x=[], fe=[], hdfe=None, data=None, extra={}, model=None, link=None, loss=None, intercept=True, stderr=True, **kwargs):
+def glm(
+    y, x=[], hdfe=None, data=None, extra={}, model=None, link=None, loss=None,
+    intercept=True, stderr=True, **kwargs
+):
     if hdfe is not None:
         if type(hdfe) is list:
             raise Exception('Can\'t handle more than one HD FE')
-        fe += [hdfe]
+        if type(hdfe) is tuple:
+            x.append(tuple(C(f) for f in hdfe))
+        else:
+            x.append(C(hdfe))
 
     # construct design matrices
-    y_vec, x_mat, x_names, c_mat, c_names = design_matrices(y, x=x, fe=fe, data=data, intercept=intercept, method='ordinal')
+    y_vec, x_mat, x_names, c_mat, c_names = design_matrices(
+        y=y, x=x, data=data, intercept=intercept, method='ordinal'
+    )
 
     # get data shape
     N = len(y_vec)
@@ -396,7 +392,9 @@ def glm(y, x=[], fe=[], hdfe=None, data=None, extra={}, model=None, link=None, l
         params['hdfe'] = params['categ'].pop(hdfe)
 
     # estimate model
-    beta, sigma = maxlike_panel(model=model, params=params, data=data, stderr=stderr, disp=disp, **kwargs)
+    beta, sigma = maxlike_panel(
+        model=model, params=params, data=data, stderr=stderr, disp=disp, **kwargs
+    )
 
     if hdfe is not None:
         beta['categ'][hdfe] = beta.pop('hdfe')
@@ -405,34 +403,33 @@ def glm(y, x=[], fe=[], hdfe=None, data=None, extra={}, model=None, link=None, l
     return beta, sigma
 
 # logit regression
-def logit(y, x=[], fe=[], data=None, **kwargs):
-    return glm(y, x=x, fe=fe, data=data, link='logit', loss='binary', **kwargs)
+def logit(y, x=[], data=None, **kwargs):
+    return glm(y, x=x, data=data, link='logit', loss='binary', **kwargs)
 
 # poisson regression
-def poisson(y, x=[], fe=[], data=None, **kwargs):
-    return glm(y, x=x, fe=fe, data=data, link='exp', loss='poisson', **kwargs)
+def poisson(y, x=[], data=None, **kwargs):
+    return glm(y, x=x, data=data, link='exp', loss='poisson', **kwargs)
 
 # zero inflated poisson regression
-def zinf_poisson(y, x=[], fe=[], data=None, **kwargs):
+def zinf_poisson(y, x=[], data=None, clip_like=20.0, **kwargs):
     return glm(
-        y, x=x, fe=fe, data=data,
-        link='exp', loss=zero_inflate(losses['poisson']),
+        y, x=x, data=data, link='exp',
+        loss=zero_inflate(losses['poisson'], clip_like=clip_like),
         extra={'lpzero': 0.0}, **kwargs
     )
 
 # negative binomial regression
-def negbin(y, x=[], fe=[], data=None, **kwargs):
+def negbin(y, x=[], data=None, **kwargs):
     return glm(
-        y, x=x, fe=fe, data=data,
-        link='exp', loss='negbin',
-        extra={'lr': 0.0}, **kwargs
+        y, x=x, data=data, link='exp', loss='negbin', extra={'lr': 0.0},
+        **kwargs
     )
 
 # zero inflated poisson regression
-def zinf_negbin(y, x=[], fe=[], data=None, **kwargs):
+def zinf_negbin(y, x=[], data=None, clip_like=20.0, **kwargs):
     return glm(
-        y, x=x, fe=fe, data=data,
-        link='exp', loss=zero_inflate(losses['negbin']),
+        y, x=x, data=data, link='exp',
+        loss=zero_inflate(losses['negbin'], clip_like=clip_like),
         extra={'lpzero': 0.0, 'lr': 0.0}, **kwargs
     )
 
@@ -443,9 +440,8 @@ def ols_loss(p, yh, y):
     like = -lsigma2 + lstsq_loss(yh, y)/sigma2
     return like
 
-def ols(y, x=[], fe=[], data=None, **kwargs):
+def ols(y, x=[], data=None, **kwargs):
     return glm(
-        y, x=x, fe=fe, data=data,
-        link='ident', loss=ols_loss,
-        extra={'lsigma2': 0.0}, **kwargs
+        y, x=x, data=data, link='ident', loss=ols_loss, extra={'lsigma2': 0.0},
+        **kwargs
     )

@@ -1,19 +1,22 @@
 ##
-## regressions
+## linear regressions
 ##
 
 import numpy as np
 import scipy.sparse as sp
 
-from .design import design_matrices, frame_matrix, absorb_categorical, category_indices, group_sums, hstack
+from .tools import hstack, multiply, ensure_dense, group_sums
+from .design import design_matrices, term_eval, absorb_categorical, category_indices
 from .summary import param_table
 
-## high dimensional fixed effects
-# x expects strings or expressions
-# fe can have strings or tuples of strings
-def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None, intercept=True, drop='first', output='table', method='solve'):
+def ols(
+    y=None, x=[], formula=None, data=None, absorb=None, cluster=None,
+    intercept=True, drop='first', method='solve', output='table'
+):
     # make design matrices
-    y_vec, x0_mat, x0_names, c_mat, c_names = design_matrices(y, x=x, fe=fe, formula=formula, data=data, intercept=intercept, drop=drop)
+    y_vec, x0_mat, x0_names, c_mat, c_names = design_matrices(
+        y=y, x=x, formula=formula, data=data, intercept=intercept, drop=drop
+    )
 
     # combine x variables
     x_mat = hstack([x0_mat, c_mat])
@@ -26,7 +29,8 @@ def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None,
     # use absorption
     if absorb is not None:
         cluster = absorb
-        c_abs = frame_matrix(absorb, data)
+        x_mat = ensure_dense(x_mat)
+        c_abs = term_eval(absorb, data, prod=False)
         y_vec, x_mat, keep = absorb_categorical(y_vec, x_mat, c_abs)
 
     # linalg tool select
@@ -56,13 +60,14 @@ def ols(y=None, x=[], fe=[], formula=None, data=None, absorb=None, cluster=None,
 
     # find standard errors
     if cluster is not None:
-        c_mat = frame_matrix(cluster, data)
+        c_mat = term_eval(cluster, data, prod=False)
         if absorb is not None:
             c_mat = c_mat[keep, :]
 
         # from cameron and miller
+        xe = multiply(x_mat, e_hat[:, None])
         codes = category_indices(c_mat)
-        xeg = group_sums(x_mat*e_hat[:, None], codes)
+        xeg = group_sums(xe, codes)
         xe2 = xeg.T @ xeg
         sigma = ixpx @ xe2 @ ixpx
     else:

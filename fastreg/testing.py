@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from . import linear
+from .design import C
+
 # true parameters
 c = {
     'one': 0.1,
@@ -16,6 +19,9 @@ c = {
 
 # poisson dampening
 pfact = 100
+
+# default specification
+default_x = ['x1', 'x2', C('id1'), C('id2')]
 
 # good negbin in terms of mean and overdispersion (var = m + alpha*m^2)
 def rand_negbin(mean, alpha, size=None, state=np.random):
@@ -95,42 +101,32 @@ def plot_coeff(beta):
 
     # plot estimates
     fig, ax = plt.subplots(figsize=(6, 5))
-    coeff.plot.scatter(x='beta0', y='beta1', ax=ax, alpha=0.5);
-    ax.plot(bvec, bvec, c='r', linewidth=1, zorder=1);
+    coeff.plot.scatter(x='beta0', y='beta1', ax=ax, alpha=0.5)
+    ax.plot(bvec, bvec, c='r', linewidth=1, zorder=1)
+
+    ax.set_xlabel('$\\beta_0$')
+    ax.set_ylabel('$\\beta_1$')
+
+    fig.tight_layout()
     fig.show()
 
-def test_ols(data, y='y', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
-    from . import linear
-
-    table = linear.ols(y=y, x=x, fe=fe, data=data, **kwargs)
+def test_ols(data, y='y', x=default_x, plot=False, **kwargs):
+    table = linear.ols(y=y, x=x, data=data, **kwargs)
 
     if plot:
         plot_coeff(table['coeff'].filter(regex='id2'))
 
     return table
 
-def test_jax(data, estim='poisson', y='p', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
+def test_glm(data, estim='poisson', y='p', x=default_x, plot=False, **kwargs):
     from . import general
 
     if type(estim) is str:
         estim = getattr(general, estim)
 
-    table = estim(y=y, x=x, fe=fe, data=data, **kwargs)
+    β, Σ = estim(y=y, x=x, data=data, **kwargs)
 
     if plot:
-        plot_coeff(table['coeff'].filter(regex='id2'))
+        plot_coeff(β['categ']['id2'])
 
-    return table
-
-def test_torch(data, estim='poisson', y='p', x=['x1', 'x2'], fe=['id1', 'id2'], plot=False, **kwargs):
-    from . import gentorch
-
-    if type(estim) is str:
-        estim = getattr(gentorch, estim)
-
-    table = estim(y=y, x=x, fe=fe, data=data, **kwargs)
-
-    if plot:
-        plot_coeff(table['coeff'].filter(regex='id2'))
-
-    return table
+    return β, Σ
