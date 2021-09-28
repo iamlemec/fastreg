@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from . import linear
-from .design import C
+from .formula import I, R, C
 
 # true parameters
 c = {
@@ -21,13 +21,13 @@ c = {
 pfact = 100
 
 # default specification
-default_x = ['x1', 'x2', C('id1'), C('id2')]
+default_x = I + R('x1') + R('x2') + C('id1') + C('id2')
 
 # good negbin in terms of mean and overdispersion (var = m + alpha*m^2)
 def rand_negbin(mean, alpha, size=None, state=np.random):
     return state.negative_binomial(1/alpha, 1/(1+alpha*mean), size=size)
 
-def dataset(N=1_000_000, K1=10, K2=100, models=[], seed=89320432):
+def dataset(N=1_000_000, K1=10, K2=100, models=['linear'], letter=True, seed=89320432):
     if type(models) is str:
         models = [models]
 
@@ -69,7 +69,7 @@ def dataset(N=1_000_000, K1=10, K2=100, models=[], seed=89320432):
         df['p1'] = st.poisson(df['Ep1'])
 
     # zero-inflated poisson
-    if 'zinf-poisson' in models:
+    if 'zinf_poisson' in models:
         df['pz0'] = np.where(st.rand(N) < c['pz'], 0, df['p0'])
         df['pz'] = np.where(st.rand(N) < c['pz'], 0, df['p'])
 
@@ -79,9 +79,12 @@ def dataset(N=1_000_000, K1=10, K2=100, models=[], seed=89320432):
         df['nb'] = rand_negbin(df['Ep'], c['alpha'], state=st)
 
     # zero-inflated poisson
-    if 'zinf-negbin' in models:
+    if 'zinf_negbin' in models:
         df['nbz0'] = np.where(st.rand(N) < c['pz'], 0, df['nb0'])
         df['nbz'] = np.where(st.rand(N) < c['pz'], 0, df['nb'])
+
+    if letter:
+        df['id1'] = df['id1'].map(lambda x: chr(65+x))
 
     return df
 
@@ -106,9 +109,6 @@ def plot_coeff(beta):
 
     ax.set_xlabel('$\\beta_0$')
     ax.set_ylabel('$\\beta_1$')
-
-    fig.tight_layout()
-    fig.show()
 
 def test_ols(data, y='y', x=default_x, plot=False, **kwargs):
     table = linear.ols(y=y, x=x, data=data, **kwargs)

@@ -16,7 +16,7 @@ z95 = norm.ppf(0.975)
 ## param summary
 ##
 
-def param_table(beta, sigma, names):
+def param_table(beta, sigma, y_name, x_names):
     # standard errors
     stderr = np.sqrt(sigma.diagonal())
 
@@ -29,10 +29,13 @@ def param_table(beta, sigma, names):
     pvalue = 2*(1-norm.cdf(np.abs(zscore)))
 
     # return all
-    return pd.DataFrame({
+    frame = pd.DataFrame({
         'coeff': beta,
         'stderr': stderr,
         'low95': low95,
         'high95': high95,
         'pvalue': pvalue
-    }, index=names)
+    }, index=x_names)
+    frame = frame.rename_axis(y_name, axis=1)
+
+    return frame

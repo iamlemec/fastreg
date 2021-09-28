@@ -5,17 +5,17 @@
 import numpy as np
 import scipy.sparse as sp
 
-from .tools import hstack, multiply, ensure_dense, group_sums
-from .design import design_matrices, term_eval, absorb_categorical, category_indices
+from .tools import hstack, multiply, ensure_dense, group_sums, group_means
+from .formula import category_indices, design_matrices, parse_tuple
 from .summary import param_table
 
 def ols(
-    y=None, x=[], formula=None, data=None, absorb=None, cluster=None,
-    intercept=True, drop='first', method='solve', output='table'
+    y=None, x=None, formula=None, data=None, absorb=None, cluster=None,
+    drop='first', method='solve', output='table'
 ):
     # make design matrices
-    y_vec, x0_mat, x0_names, c_mat, c_names = design_matrices(
-        y=y, x=x, formula=formula, data=data, intercept=intercept, drop=drop
+    y_vec, y_name, x0_mat, x0_names, c_mat, c_names = design_matrices(
+        y=y, x=x, formula=formula, data=data, drop=drop
     )
 
     # combine x variables
@@ -30,8 +30,8 @@ def ols(
     if absorb is not None:
         cluster = absorb
         x_mat = ensure_dense(x_mat)
-        c_abs = term_eval(absorb, data, prod=False)
-        y_vec, x_mat, keep = absorb_categorical(y_vec, x_mat, c_abs)
+        a_mat = parse_tuple(absorb).raw(data)
+        y_vec, x_mat, keep = absorb_categorical(y_vec, x_mat, a_mat)
 
     # linalg tool select
     if sp.issparse(x_mat):
@@ -60,9 +60,10 @@ def ols(
 
     # find standard errors
     if cluster is not None:
-        c_mat = term_eval(cluster, data, prod=False)
         if absorb is not None:
-            c_mat = c_mat[keep, :]
+            c_mat = a_mat[keep, :]
+        else:
+            c_mat = parse_tuple(cluster).raw(data)
 
         # from cameron and miller
         xe = multiply(x_mat, e_hat[:, None])
@@ -75,12 +76,59 @@ def ols(
         sigma = s2*ixpx
 
     if output == 'table':
-        return param_table(beta, sigma, x_names)
+        return param_table(beta, sigma, y_name, x_names)
     else:
         return {
             'beta': beta,
             'sigma': sigma,
-            'x_names': x_names,
             'y_hat': y_hat,
-            'e_hat': e_hat
+            'e_hat': e_hat,
+            'y_name': y_name,
+            'x_names': x_names,
         }
+
+##
+## absorption
+##
+
+def absorb_categorical(y, x, abs):
+    N, K = x.shape
+    _, A = abs.shape
+
+    # copy so as not to destroy
+    y = y.copy()
+    x = x.copy()
+
+    # store original means
+    avg_y0 = np.mean(y)
+    avg_x0 = np.mean(x, axis=0)
+
+    # track whether to drop
+    keep = np.ones(N, dtype=np.bool)
+
+    # do this iteratively to reduce data loss
+    for j in range(A):
+        # create class groups
+        codes = category_indices(abs[:, j])
+
+        # perform differencing on y
+        avg_y = group_means(y, codes)
+        y -= avg_y[codes]
+
+        # perform differencing on x
+        avg_x = group_means(x, codes)
+        x -= avg_x[codes, :]
+
+        # detect singletons
+        multi = np.bincount(codes) > 1
+        keep &= multi[codes]
+
+    # recenter means
+    y += avg_y0
+    x += avg_x0[None, :]
+
+    # drop singletons
+    y = y[keep]
+    x = x[keep, :]
+
+    return y, x, keep

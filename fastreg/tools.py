@@ -15,9 +15,12 @@ def ensure_dense(x):
     return x.toarray() if sp.issparse(x) else x
 
 # handles empty data
-def vstack(v):
+def vstack(v, format='csr'):
+    v = [x for x in v if x is not None]
     if len(v) == 0:
         return None
+    elif any([sp.issparse(x) for x in v]):
+        return sp.vstack(v, format=format)
     else:
         return np.vstack(v)
 
@@ -26,7 +29,7 @@ def hstack(v, format='csr'):
     v = [x for x in v if x is not None]
     if len(v) == 0:
         return None
-    if any([sp.issparse(x) for x in v]):
+    elif any([sp.issparse(x) for x in v]):
         return sp.hstack(v, format=format)
     else:
         return np.hstack(v)

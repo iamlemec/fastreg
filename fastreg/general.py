@@ -12,7 +12,7 @@ import scipy.sparse as sp
 import pandas as pd
 from operator import and_, add
 
-from .design import design_matrices, C
+from .formula import design_matrices, parse_item, parse_list, C
 from .summary import param_table
 
 ##
@@ -346,20 +346,16 @@ def glm_model(link, loss, hdfe=None):
 
 # default glm specification
 def glm(
-    y, x=[], hdfe=None, data=None, extra={}, model=None, link=None, loss=None,
-    intercept=True, stderr=True, **kwargs
+    y=None, x=None, hdfe=None, data=None, extra={}, model=None, link=None,
+    loss=None, stderr=True, **kwargs
 ):
+    y, x = parse_item(y), parse_list(x)
     if hdfe is not None:
-        if type(hdfe) is list:
-            raise Exception('Can\'t handle more than one HD FE')
-        if type(hdfe) is tuple:
-            x.append(tuple(C(f) for f in hdfe))
-        else:
-            x.append(C(hdfe))
+        x += C(hdfe)
 
     # construct design matrices
-    y_vec, x_mat, x_names, c_mat, c_names = design_matrices(
-        y=y, x=x, data=data, intercept=intercept, method='ordinal'
+    y_vec, y_name, x_mat, x_names, c_mat, c_names = design_matrices(
+        y=y, x=x, data=data, method='ordinal'
     )
 
     # get data shape
@@ -403,32 +399,32 @@ def glm(
     return beta, sigma
 
 # logit regression
-def logit(y, x=[], data=None, **kwargs):
-    return glm(y, x=x, data=data, link='logit', loss='binary', **kwargs)
+def logit(y=None, x=None, data=None, **kwargs):
+    return glm(y=y, x=x, data=data, link='logit', loss='binary', **kwargs)
 
 # poisson regression
-def poisson(y, x=[], data=None, **kwargs):
-    return glm(y, x=x, data=data, link='exp', loss='poisson', **kwargs)
+def poisson(y=None, x=None, data=None, **kwargs):
+    return glm(y=y, x=x, data=data, link='exp', loss='poisson', **kwargs)
 
 # zero inflated poisson regression
-def zinf_poisson(y, x=[], data=None, clip_like=20.0, **kwargs):
+def zinf_poisson(y=None, x=None, data=None, clip_like=20.0, **kwargs):
     return glm(
-        y, x=x, data=data, link='exp',
+        y=y, x=x, data=data, link='exp',
         loss=zero_inflate(losses['poisson'], clip_like=clip_like),
         extra={'lpzero': 0.0}, **kwargs
     )
 
 # negative binomial regression
-def negbin(y, x=[], data=None, **kwargs):
+def negbin(y=None, x=None, data=None, **kwargs):
     return glm(
-        y, x=x, data=data, link='exp', loss='negbin', extra={'lr': 0.0},
+        y=y, x=x, data=data, link='exp', loss='negbin', extra={'lr': 0.0},
         **kwargs
     )
 
 # zero inflated poisson regression
-def zinf_negbin(y, x=[], data=None, clip_like=20.0, **kwargs):
+def zinf_negbin(y=None, x=None, data=None, clip_like=20.0, **kwargs):
     return glm(
-        y, x=x, data=data, link='exp',
+        y=y, x=x, data=data, link='exp',
         loss=zero_inflate(losses['negbin'], clip_like=clip_like),
         extra={'lpzero': 0.0, 'lr': 0.0}, **kwargs
     )
@@ -440,8 +436,8 @@ def ols_loss(p, yh, y):
     like = -lsigma2 + lstsq_loss(yh, y)/sigma2
     return like
 
-def ols(y, x=[], data=None, **kwargs):
+def ols(y=None, x=None, data=None, **kwargs):
     return glm(
-        y, x=x, data=data, link='ident', loss=ols_loss, extra={'lsigma2': 0.0},
+        y=y, x=x, data=data, link='ident', loss=ols_loss, extra={'lsigma2': 0.0},
         **kwargs
     )
