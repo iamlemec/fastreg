@@ -21,9 +21,9 @@ Optionally, for the maximum likelihood routines, you'll need `jax` (and `jaxlib`
 
 First import the necessary functions
 ``` python
-import fastreg.linear as fr
+import fastreg.linear as lin
 import fastreg.testing as test
-from fastreg.design import C
+from fastreg.formula import I, R, C
 ```
 
 Create some testing data
@@ -31,28 +31,33 @@ Create some testing data
 data = test.dataset(N=100_000, K1=10, K2=100, models='linear')
 ```
 
-Regress `y` on `x1` and `x2` given `pandas` DataFrame `data`:
+Regress `y` on `1`, `x1`, and `x2` given `pandas` DataFrame `data`:
 ``` python
-fr.ols(y='y', x=['x1', 'x2'], data=data)
+fr.ols(y='y', x=I+R('x1')+R('x2'), data=data)
 ```
 
-Regress `y` on `x1`, `x2`, categorical `id1`, and categorical `id2`:
+Regress `y` on `1`, `x1`, `x2`, categorical `id1`, and categorical `id2`:
 ``` python
-fr.ols(y='y', x=['x1', 'x2', C('id1'), C('id2')], data=data)
+fr.ols(y='y', x=I+R('x1')+R('x2')+C('id1')+C('id2'), data=data)
 ```
 
-Regress `y` on `x1`, `x2`, and all combinations of categoricals `id1` and `id2`:
+Regress `y` on `1`, `x1`, `x2`, and all combinations of categoricals `id1` and `id2`:
 ``` python
-fr.ols(y='y', x=['x1', 'x2', (C('id1'), C('id2'))], data=data)
+fr.ols(y='y', x=I+R('x1')+R('x2')+C('id1')*C('id2'), data=data)
 ```
+Note that `*` is analogous to `:` in R-style syntax.
 
 Instead of passing `y` and `x`, you can also pass an R-style formula string to `formula`, as in:
 ``` python
-fr.ols(formula='y ~ x1 + x2 + C(id1) + C(id2)', data=data)
+fr.ols(formula='y ~ 1 + x1 + x2 + C(id1):C(id2)', data=data)
 ```
-Right now, coding schemes other than treatment and mixing continuous and categorical variables in one term are not supported.
 
-You can pass a list of column names to `cluster` to cluster standard errors on those variables. You can also pass a list of columns to `absorb` to absorb those variables a la Stata's `areg`. This will automatically cluster on those variables as well.
+There's even a third intermediate option using lists and tuples:
+``` python
+fr.ols(y='y', x=['1', 'x1', 'x2', (C('id1'), C('id2'))], data=data)
+```
+
+Right now, categorical coding schemes other than treatment are not supported. You can pass a list of column names to `cluster` to cluster standard errors on those variables. You can also pass a list of columns to `absorb` to absorb those variables a la Stata's `areg`. This will automatically cluster on those variables as well.
 
 ### Experimental
 
