@@ -12,7 +12,7 @@ import scipy.sparse as sp
 import pandas as pd
 from operator import and_, add
 
-from .formula import design_matrices, parse_item, parse_list, C
+from .formula import design_matrices, parse_item, parse_tuple, parse_list, Categ
 from .summary import param_table
 
 ##
@@ -351,7 +351,9 @@ def glm(
 ):
     y, x = parse_item(y), parse_list(x)
     if hdfe is not None:
-        x += C(hdfe)
+        c_hdfe = parse_tuple(hdfe, convert=Categ)
+        x += c_hdfe
+        hdfe = c_hdfe.name()
 
     # construct design matrices
     y_vec, y_name, x_mat, x_names, c_mat, c_names = design_matrices(

@@ -6,7 +6,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from .tools import hstack, multiply, ensure_dense, group_sums, group_means
-from .formula import category_indices, design_matrices, parse_tuple
+from .formula import category_indices, design_matrices, parse_tuple, Categ
 from .summary import param_table
 
 def ols(
@@ -30,7 +30,8 @@ def ols(
     if absorb is not None:
         cluster = absorb
         x_mat = ensure_dense(x_mat)
-        a_mat = parse_tuple(absorb).raw(data)
+        a_trm = parse_tuple(absorb, convert=Categ)
+        a_mat = a_trm.raw(data)
         y_vec, x_mat, keep = absorb_categorical(y_vec, x_mat, a_mat)
 
     # linalg tool select
@@ -63,7 +64,8 @@ def ols(
         if absorb is not None:
             c_mat = a_mat[keep, :]
         else:
-            c_mat = parse_tuple(cluster).raw(data)
+            c_trm = parse_tuple(cluster, convert=Categ)
+            c_mat = c_trm.raw(data)
 
         # from cameron and miller
         xe = multiply(x_mat, e_hat[:, None])
@@ -81,10 +83,10 @@ def ols(
         return {
             'beta': beta,
             'sigma': sigma,
-            'y_hat': y_hat,
-            'e_hat': e_hat,
             'y_name': y_name,
             'x_names': x_names,
+            'y_hat': y_hat,
+            'e_hat': e_hat,
         }
 
 ##

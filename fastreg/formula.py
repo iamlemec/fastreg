@@ -291,27 +291,31 @@ def parse_formula(form):
     else:
         return x_terms
 
-def parse_item(i):
+def parse_item(i, convert=Real):
     if isinstance(i, Factor):
         return i
     else:
-        return Factor(i)
+        return convert(i)
 
-def parse_tuple(t):
+def parse_tuple(t, convert=Real):
     if isinstance(t, Term):
         return t
     else:
         if type(t) not in (tuple, list):
             t = t,
-        return Term([parse_item(i) for i in t])
+        return Term([
+            parse_item(i, convert=convert) for i in t
+        ])
 
-def parse_list(l):
+def parse_list(l, convert=Real):
     if isinstance(l, Formula):
         return l
     else:
         if type(l) not in (tuple, list):
             l = l,
-        return Formula([parse_tuple(t) for t in l])
+        return Formula([
+            parse_tuple(t, convert=convert) for t in l
+        ])
 
 ##
 ## design interface
