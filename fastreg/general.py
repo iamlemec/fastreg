@@ -322,7 +322,7 @@ def maxlike_panel(
     return params1, sigma
 
 # make a glm model and compile
-def glm_model(link, loss, hdfe=None):
+def glm_model(link, loss, hdfe=None, drop='first'):
     if type(link) is str:
         link = links[link]
     if type(loss) is str:
@@ -337,7 +337,10 @@ def glm_model(link, loss, hdfe=None):
         linear = xdat @ real
         for i, c in enumerate(categ):
             cidx = cdat.T[i] # needed for vmap to work
-            linear += categ[c][cidx]
+            if drop == 'first':
+                linear += np.where(cidx > 0, categ[c][cidx-1], 0.0)
+            else:
+                linear += categ[c][cidx]
         pred = link(linear)
         like = loss(par, pred, ydat)
         return np.mean(like)
@@ -347,7 +350,7 @@ def glm_model(link, loss, hdfe=None):
 # default glm specification
 def glm(
     y=None, x=None, hdfe=None, data=None, extra={}, model=None, link=None,
-    loss=None, stderr=True, **kwargs
+    loss=None, drop='first', stderr=True, **kwargs
 ):
     y, x = parse_item(y), parse_list(x)
     if hdfe is not None:
@@ -368,7 +371,7 @@ def glm(
 
     # compile model if needed
     if model is None:
-        model = glm_model(link, loss, hdfe=hdfe)
+        model = glm_model(link, loss, hdfe=hdfe, drop=drop)
 
     # displayer
     def disp(e, l, p):
@@ -383,7 +386,8 @@ def glm(
     data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
 
     # initial parameter guesses
-    pcateg = {c: np.zeros(s) for c, s in zip(c_names, Kl)}
+    n_drop = 1 if drop == 'first' else 0 # only have β[1:]
+    pcateg = {c: np.zeros(s-n_drop) for c, s in zip(c_names, Kl)}
     params = {'real': np.zeros(Kx), 'categ': pcateg, **extra}
 
     if hdfe is not None:

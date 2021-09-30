@@ -35,7 +35,7 @@ def category_indices(vals, return_labels=False):
         vals = vals[:, None]
 
     # convert to packed integers
-    ord_enc = OrdinalEncoder(categories='auto', dtype=np.int)
+    ord_enc = OrdinalEncoder(categories='auto', dtype=int)
     ord_vals = ord_enc.fit_transform(vals)
     ord_cats = ord_enc.categories_
 
@@ -154,6 +154,9 @@ class Term:
     def raw(self, data):
         return np.vstack([f.eval(data) for f in self.facts]).T
 
+    def enc(self, data):
+        return category_indices(self.raw(data))
+
     def eval(self, data, method='sparse', drop='first'):
         # zero length is identity
         if len(self.facts) == 0:
@@ -165,7 +168,7 @@ class Term:
         # handle categorical
         if len(categ) > 0:
             categ_mat = categ.raw(data)
-            categ_nam = [c.expr for c in categ]
+            categ_nam = [c.name() for c in categ]
             categ_vals, categ_label = encode_categorical(
                 categ_mat, categ_nam, method=method, drop=drop
             )
@@ -207,6 +210,9 @@ class Formula:
             return Formula(self.terms+(other,))
         elif isinstance(other, Formula):
             return Formula(self.terms+other.terms)
+
+    def enc(self, data):
+        return np.vstack([t.enc(data) for t in self.terms]).T
 
     def eval(self, data, method='sparse', drop='first'):
         # split by all real or not
@@ -329,7 +335,7 @@ def design_matrices(
     else:
         y, x = parse_item(y), parse_list(x)
 
-    y_vec, y_name = y.eval(data), y.expr
+    y_vec, y_name = y.eval(data), y.name()
     x_mat, x_names, c_mat, c_labels = x.eval(data, method=method, drop=drop)
 
     return y_vec, y_name, x_mat, x_names, c_mat, c_labels
