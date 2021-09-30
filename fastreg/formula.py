@@ -21,6 +21,14 @@ def is_categorical(ft):
     elif isinstance(ft, Term):
         return any([is_categorical(t) for t in ft.facts])
 
+def ensure_tuple(t):
+    if type(t) is tuple:
+        return t
+    elif type(t) is list:
+        return tuple(t)
+    else:
+        return t,
+
 ##
 ## categoricals
 ##
@@ -87,23 +95,21 @@ class Factor:
     def __repr__(self):
         return self.expr
 
-    def __mul__(self, other):
-        if isinstance(other, Factor):
-            return Term((self, other))
-        elif isinstance(other, Term):
-            return Term((self,)+other.facts)
-
     def __add__(self, other):
         if isinstance(other, Factor):
-            term1 = Term((self,))
-            term2 = Term((other,))
-            return Formula((term1, term2))
+            return Formula(Term(self), Term(other))
         elif isinstance(other, Term):
-            term = Term((self,))
-            return Formula((term, other))
+            return Formula(Term(self), other)
         elif isinstance(other, Formula):
-            term = Term((self,))
-            return Formula((term,)+other.terms)
+            return Formula(Term(self), *other)
+
+    def __mul__(self, other):
+        if isinstance(other, Factor):
+            return Term(self, other)
+        elif isinstance(other, Term):
+            return Term(self, *other)
+        elif isinstance(other, Formula):
+            return Formula(*[Term(self, *t) for t in other])
 
     def name(self):
         return self.expr
@@ -118,8 +124,8 @@ class Factor:
             return np.full(len(data), vals)
 
 class Term:
-    def __init__(self, facts=()):
-        self.facts = tuple(facts)
+    def __init__(self, *facts):
+        self.facts = facts
 
     def __repr__(self):
         return self.name()
@@ -130,20 +136,21 @@ class Term:
     def __len__(self):
         return len(self.facts)
 
-    def __mul__(self, other):
-        if isinstance(other, Factor):
-            return Term(self.facts+(other,))
-        elif isinstance(other, Term):
-            return Term(self.facts+other.facts)
-
     def __add__(self, other):
         if isinstance(other, Factor):
-            term = Term((other,))
-            return Formula((self, term))
+            return Formula(self, Term(other))
         elif isinstance(other, Term):
-            return Formula((self, other))
+            return Formula(self, other)
         elif isinstance(other, Formula):
-            return Formula((self,)+other.terms)
+            return Formula(self, *other)
+
+    def __mul__(self, other):
+        if isinstance(other, Factor):
+            return Term(*self, other)
+        elif isinstance(other, Term):
+            return Term(*self, *other)
+        elif isinstance(other, Formula):
+            return Formula(*[Term(*self, *t) for t in other])
 
     def name(self):
         if len(self.facts) == 0:
@@ -163,7 +170,8 @@ class Term:
             return np.ones((len(data), 1)), '1'
 
         # separate pure real and categorical
-        categ, reals = map(Term, categorize(is_categorical, self.facts))
+        categ, reals = categorize(is_categorical, self.facts)
+        categ, reals = Term(*categ), Term(*reals)
 
         # handle categorical
         if len(categ) > 0:
@@ -190,8 +198,8 @@ class Term:
             return term_vals, term_label
 
 class Formula:
-    def __init__(self, terms=()):
-        self.terms = tuple(terms)
+    def __init__(self, *terms):
+        self.terms = terms
 
     def __repr__(self):
         return ' + '.join(str(t) for t in self.terms)
@@ -204,12 +212,21 @@ class Formula:
 
     def __add__(self, other):
         if isinstance(other, Factor):
-            term = Term((other,))
-            return Formula(self.terms+(term,))
+            return Formula(*self, Term(other))
         elif isinstance(other, Term):
-            return Formula(self.terms+(other,))
+            return Formula(*self, other)
         elif isinstance(other, Formula):
-            return Formula(self.terms+other.terms)
+            return Formula(*self, *other)
+
+    def __mul__(self, other):
+        if isinstance(other, Factor):
+            return Formula(*[Term(*t, other) for t in self])
+        elif isinstance(other, Term):
+            return Formula(*[Term(*t, *other) for t in self])
+        elif isinstance(other, Formula):
+            return Formula(*chainer([
+                [Term(*t1, *t2) for t1 in self] for t2 in other
+            ]))
 
     def enc(self, data):
         return np.vstack([t.enc(data) for t in self.terms]).T
@@ -279,7 +296,7 @@ def parse_factor(fact):
         return Real(fact.code)
 
 def parse_term(term):
-    return Term([parse_factor(f) for f in term.factors])
+    return Term(*[parse_factor(f) for f in term.factors])
 
 # this can only handle treatment coding, but that's required for sparsity
 def parse_formula(form):
@@ -290,7 +307,7 @@ def parse_formula(form):
     lhs, rhs = desc.lhs_termlist, desc.rhs_termlist
 
     # convert to string lists
-    x_terms = Formula([parse_term(t) for t in rhs])
+    x_terms = Formula(*[parse_term(t) for t in rhs])
     if len(lhs) > 0:
         y_terms = parse_factor(lhs[0].factors[0])
         return y_terms, x_terms
@@ -309,7 +326,7 @@ def parse_tuple(t, convert=Real):
     else:
         if type(t) not in (tuple, list):
             t = t,
-        return Term([
+        return Term(*[
             parse_item(i, convert=convert) for i in t
         ])
 
@@ -319,7 +336,7 @@ def parse_list(l, convert=Real):
     else:
         if type(l) not in (tuple, list):
             l = l,
-        return Formula([
+        return Formula(*[
             parse_tuple(t, convert=convert) for t in l
         ])
 
