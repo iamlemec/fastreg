@@ -280,6 +280,11 @@ class Formula:
 ## column types
 ##
 
+## custom columns
+# eval (mandatory): an ndarray of the values
+# name (recommended): what gets displayed in the regression table
+# __repr__ (optional): what gets displayed on print
+
 class Real(Factor):
     def __repr__(self):
         return f'R({self.name()})'
@@ -294,7 +299,7 @@ class Demean(Real):
         self.cond = cond
 
     def name(self):
-        args = '' if self.cond is None else f'({self.cond})'
+        args = '' if self.cond is None else f'|{self.cond}'
         return f'{self.expr}-μ{args}'
 
     def eval(self, data):
@@ -317,12 +322,12 @@ class Binned(Categ):
 
     def name(self):
         nb = self.bins if type(self.bins) is int else len(self.bins)
-        return f'{self.expr}—bin'
+        return f'{self.expr}:bin{nb}'
 
     def eval(self, data):
         vals = robust_eval(data, self.expr)
         bins = pd.cut(vals, self.bins, labels=self.labels)
-        return bins
+        return bins + 1
 
 # shortcuts
 I = Term()
