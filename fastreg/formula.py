@@ -19,7 +19,7 @@ def is_categorical(ft):
     if isinstance(ft, Factor):
         return isinstance(ft, Categ)
     elif isinstance(ft, Term):
-        return any([is_categorical(t) for t in ft.facts])
+        return any(is_categorical(t) for t in ft)
 
 def ensure_tuple(t):
     if type(t) is tuple:
@@ -92,6 +92,12 @@ class Factor:
     def __init__(self, expr):
         self.expr = expr
 
+    def __hash__(self):
+        return hash(str(self))
+
+    def __eq__(self, other):
+        return str(self) == str(other)
+
     def __repr__(self):
         return self.expr
 
@@ -127,8 +133,17 @@ class Term:
     def __init__(self, *facts):
         self.facts = facts
 
+    def __hash__(self):
+        return hash(tuple(set(self)))
+
+    def __eq__(self, other):
+        return set(self) == set(other)
+
     def __repr__(self):
-        return self.name()
+        if len(self) == 0:
+            return 'I'
+        else:
+            return '*'.join([str(f) for f in self])
 
     def __iter__(self):
         return iter(self.facts)
@@ -153,24 +168,21 @@ class Term:
             return Formula(*[Term(*self, *t) for t in other])
 
     def name(self):
-        if len(self.facts) == 0:
-            return '1'
-        else:
-            return '*'.join([f.name() for f in self.facts])
+        return '*'.join([f.expr for f in self])
 
     def raw(self, data):
-        return np.vstack([f.eval(data) for f in self.facts]).T
+        return np.vstack([f.eval(data) for f in self]).T
 
     def enc(self, data):
         return category_indices(self.raw(data))
 
     def eval(self, data, method='sparse', drop='first'):
         # zero length is identity
-        if len(self.facts) == 0:
-            return np.ones((len(data), 1)), '1'
+        if len(self) == 0:
+            return np.ones((len(data), 1)), 'I'
 
         # separate pure real and categorical
-        categ, reals = categorize(is_categorical, self.facts)
+        categ, reals = categorize(is_categorical, self)
         categ, reals = Term(*categ), Term(*reals)
 
         # handle categorical
@@ -194,15 +206,15 @@ class Term:
             return categ_vals, categ_label
         else:
             term_vals = categ_vals.multiply(reals_vals)
-            term_label = [f'{l}:{reals_label}' for l in categ_label]
+            term_label = [f'({l})*{reals_label}' for l in categ_label]
             return term_vals, term_label
 
 class Formula:
     def __init__(self, *terms):
-        self.terms = terms
+        self.terms = tuple(dict.fromkeys(terms)) # order preserving unique
 
     def __repr__(self):
-        return ' + '.join(str(t) for t in self.terms)
+        return ' + '.join(str(t) for t in self)
 
     def __iter__(self):
         return iter(self.terms)
@@ -229,11 +241,11 @@ class Formula:
             ]))
 
     def enc(self, data):
-        return np.vstack([t.enc(data) for t in self.terms]).T
+        return np.vstack([t.enc(data) for t in self]).T
 
     def eval(self, data, method='sparse', drop='first'):
         # split by all real or not
-        categ, reals = categorize(is_categorical, self.terms)
+        categ, reals = categorize(is_categorical, self)
 
         # handle categories
         if len(categ) > 0:
@@ -266,7 +278,8 @@ class Formula:
 ##
 
 class Real(Factor):
-    pass
+    def __repr__(self):
+        return f'R({self.expr})'
 
 class Categ(Factor):
     def __repr__(self):
