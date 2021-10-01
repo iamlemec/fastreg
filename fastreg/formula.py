@@ -29,6 +29,15 @@ def ensure_tuple(t):
     else:
         return t,
 
+def robust_eval(data, expr):
+    vals = data.eval(expr, engine='python')
+    if type(vals) is pd.Series:
+        return vals.values
+    elif type(vals) is np.ndarray:
+        return vals
+    else:
+        return np.full(len(data), vals)
+
 ##
 ## categoricals
 ##
@@ -121,13 +130,7 @@ class Factor:
         return self.expr
 
     def eval(self, data):
-        vals = data.eval(self.expr, engine='python')
-        if type(vals) is pd.Series:
-            return vals.values
-        elif type(vals) is np.ndarray:
-            return vals
-        else:
-            return np.full(len(data), vals)
+        return robust_eval(data, self.expr)
 
 class Term:
     def __init__(self, *facts):
@@ -168,7 +171,7 @@ class Term:
             return Formula(*[Term(*self, *t) for t in other])
 
     def name(self):
-        return '*'.join([f.expr for f in self])
+        return '*'.join([f.name() for f in self])
 
     def raw(self, data):
         return np.vstack([f.eval(data) for f in self]).T
@@ -279,16 +282,54 @@ class Formula:
 
 class Real(Factor):
     def __repr__(self):
-        return f'R({self.expr})'
+        return f'R({self.name()})'
 
 class Categ(Factor):
     def __repr__(self):
-        return f'C({self.expr})'
+        return f'C({self.name()})'
+
+class Demean(Real):
+    def __init__(self, expr, cond=None):
+        self.expr = expr
+        self.cond = cond
+
+    def name(self):
+        args = '' if self.cond is None else f'({self.cond})'
+        return f'{self.expr}-μ{args}'
+
+    def eval(self, data):
+        vals = robust_eval(data, self.expr)
+        if self.cond is None:
+            means = np.mean(vals)
+        else:
+            cond = robust_eval(data, self.cond)
+            datf = pd.DataFrame({'vals': vals, 'cond': cond})
+            cmean = datf.groupby('cond')['vals'].mean().rename('mean')
+            datf = datf.join(cmean, on='cond')
+            means = datf['mean'].values
+        return vals - means
+
+class Binned(Categ):
+    def __init__(self, expr, bins, labels=False):
+        self.expr = expr
+        self.bins = bins
+        self.labels = None if labels else False
+
+    def name(self):
+        nb = self.bins if type(self.bins) is int else len(self.bins)
+        return f'{self.expr}—bin'
+
+    def eval(self, data):
+        vals = robust_eval(data, self.expr)
+        bins = pd.cut(vals, self.bins, labels=self.labels)
+        return bins
 
 # shortcuts
 I = Term()
 R = Real
 C = Categ
+D = Demean
+B = Binned
 
 ##
 ## conversion
