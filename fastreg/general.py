@@ -2,6 +2,7 @@ import jax
 import jax.lax as lax
 from jax.scipy.special import gammaln
 import jax.numpy as np
+import jax.numpy.linalg as la
 from jax.tree_util import (
     tree_flatten, tree_leaves, tree_map, tree_multimap, tree_reduce,
     tree_structure
@@ -12,7 +13,10 @@ import scipy.sparse as sp
 import pandas as pd
 from operator import and_, add
 
-from .formula import design_matrices, parse_item, parse_tuple, parse_list, Categ
+from .formula import (
+    design_matrices, parse_item, parse_tuple, parse_list, ensure_formula, Categ
+)
+from .tools import block_inverse
 from .summary import param_table
 
 ##
@@ -21,12 +25,6 @@ from .summary import param_table
 
 # numbers
 eps = 1e-7
-
-##
-## precompile
-##
-
-inv_fun = jax.jit(np.linalg.inv)
 
 ##
 ## canned models
@@ -82,7 +80,9 @@ class DataLoader:
     def __init__(self, data, batch_size=None):
         if type(data) is pd.DataFrame:
             data = data.to_dict('series')
-        self.data = tree_map(lambda x: np.array(x) if type(x) is not np.ndarray else x, data)
+        self.data = tree_map(
+            lambda x: np.array(x) if type(x) is not np.ndarray else x, data
+        )
         shapes = [d.shape[0] for d in tree_leaves(self.data)]
         self.data_size = shapes[0] # should all be the same size
         self.batch_size = batch_size
@@ -126,7 +126,10 @@ def atleast_2d(x, axis=0):
 
 def block_matrix(tree, dims, size):
     blocks = chunks(tree_leaves(tree), size)
-    mat = np.block([[atleast_2d(x, axis=int(d>0)) for d, x in zip(dims, row)] for row in blocks])
+    mat = np.block([
+        [atleast_2d(x, axis=int(d>0)) for d, x in zip(dims, row)]
+        for row in blocks
+    ])
     return mat
 
 def block_unpack(mat, tree, sizes):
@@ -181,7 +184,9 @@ def tree_hessian(model, params, loader, method='deriv', batch_size=1024):
     elif method == 'outer':
         tree_axis = tree_map(lambda _: 0, loader.data)
         g_fun = jax.jit(jax.vmap(jax.grad(model), (None, tree_axis), 0))
-        hess = tree_batch_reduce(lambda b: tree_outer(g_fun(params, b)), batch_iter)
+        hess = tree_batch_reduce(
+            lambda b: tree_outer(g_fun(params, b)), batch_iter
+        )
         hess = tree_map(lambda x: -x/N, hess)
     else:
         raise Exception(f'Unknown hessian method: {method}')
@@ -210,14 +215,20 @@ def adam(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, disp=None):
             loss, grad = vg_fun(params, batch)
 
             lnan = np.isnan(loss)
-            gnan = tree_reduce(and_, tree_map(lambda g: np.isnan(g).any(), grad))
+            gnan = tree_reduce(
+                and_, tree_map(lambda g: np.isnan(g).any(), grad)
+            )
 
             if lnan or gnan:
                 print('Encountered nans!')
                 return params, None
 
-            grms = tree_multimap(lambda r, g: gamma*r + (1-gamma)*g**2, grms, grad)
-            params = tree_multimap(lambda p, g, r: p + eta*g/np.sqrt(r+eps), params, grad, grms)
+            grms = tree_multimap(
+                lambda r, g: gamma*r + (1-gamma)*g**2, grms, grad
+            )
+            params = tree_multimap(
+                lambda p, g, r: p + eta*g/np.sqrt(r+eps), params, grad, grms
+            )
 
             # compute statistics
             agg_loss += loss
@@ -238,7 +249,8 @@ def adam(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, disp=None):
 
 def tree_outer_flat(tree):
     tree1, vec = popoff(tree, 'hdfe')
-    mat = np.hstack(tree_leaves(tree1))
+    leaves = [np.atleast_2d(l.T).T for l in tree_leaves(tree1)]
+    mat = np.hstack(leaves)
     A = mat.T @ mat
     B = mat.T @ vec
     C = vec.T @ mat
@@ -247,7 +259,8 @@ def tree_outer_flat(tree):
 
 # maximum likelihood using jax - this expects a mean log likelihood
 def maxlike(
-    model=None, params=None, data=None, stderr=False, optim=adam, backend='gpu', **kwargs
+    model=None, params=None, data=None, stderr=False, optim=adam, backend='gpu',
+    **kwargs
 ):
     # get model gradients
     vg_fun = jax.jit(jax.value_and_grad(model), backend=backend)
@@ -275,8 +288,9 @@ def maxlike(
 # the assumes the data is batchable, which usually means panel-like
 # a toplevel hdfe variable is treated special-like
 def maxlike_panel(
-    model=None, params=None, data=None, vg_fun=None, hessian='outer', stderr=False,
-    optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs
+    model=None, params=None, data=None, vg_fun=None, hessian='outer',
+    stderr=False, optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu',
+    **kwargs
 ):
     if vg_fun is None:
         vg_fun = jax.jit(jax.value_and_grad(model))
@@ -294,18 +308,16 @@ def maxlike_panel(
     if 'hdfe' in params:
         # get vectorized gradient
         tree_axis = tree_map(lambda _: 0, data)
-        vg_fun = jax.jit(jax.vmap(jax.grad(model), (None, tree_axis), 0), backend=backend)
+        vg_fun = jax.jit(
+            jax.vmap(jax.grad(model), (None, tree_axis), 0), backend=backend
+        )
 
-        # compute hessian blocks
+        # compute hessian inverse by block
         hload = loader(batch_stderr)
-        A, B, C, d = tree_batch_reduce(lambda b: tree_outer_flat(vg_fun(params1, b)), hload)
-        d1 = 1/d
-        d1l, d1r = d1[:, None], d1[None, :]
-
-        # use block inverse formula
-        A1 = inv_fun(A - (B*d1r) @ C)
-        psig = A1
-        hsig = d1 + np.sum((d1l*C)*(A1 @ (B*d1r)).T, axis=1)
+        A, B, C, d = tree_batch_reduce(
+            lambda b: tree_outer_flat(vg_fun(params1, b)), hload
+        )
+        psig, hsig = block_inverse(A, B, C, d, inv=la.inv)
 
         # unpack into tree
         par0, _ = popoff(params1, 'hdfe')
@@ -315,8 +327,10 @@ def maxlike_panel(
         sigma['hdfe'] = hsig
     else:
         # get model hessian
-        hess = tree_hessian(model, params, loader, method=hessian, batch_size=batch_stderr)
-        fish = tree_matfun(inv_fun, hess, params)
+        hess = tree_hessian(
+            model, params, loader, method=hessian, batch_size=batch_stderr
+        )
+        fish = tree_matfun(la.inv, hess, params)
         sigma = tree_map(lambda x: -x/N, fish)
 
     return params1, sigma
@@ -349,10 +363,13 @@ def glm_model(link, loss, hdfe=None, drop='first'):
 
 # default glm specification
 def glm(
-    y=None, x=None, hdfe=None, data=None, extra={}, model=None, link=None,
-    loss=None, drop='first', stderr=True, **kwargs
+    y=None, x=None, formula=None, hdfe=None, data=None, extra={}, model=None,
+    link=None, loss=None, drop='first', stderr=True, display=True, **kwargs
 ):
-    y, x = parse_item(y), parse_list(x)
+    # convert to formula system
+    y, x = ensure_formula(x=x, y=y, formula=formula)
+
+    # add in hdfe if needed
     if hdfe is not None:
         c_hdfe = parse_tuple(hdfe, convert=Categ)
         x += c_hdfe
@@ -381,13 +398,14 @@ def glm(
             categ[hdfe] = p['hdfe']
         mcats = np.array([np.mean(c) for c in categ.values()])
         print(f'[{e:3d}] {l:.4f}: {np.mean(real):.4f} {np.mean(mcats):.4f}')
+    disp1 = disp if display else None
 
     # organize data
     data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
 
     # initial parameter guesses
     n_drop = 1 if drop == 'first' else 0 # only have β[1:]
-    pcateg = {c: np.zeros(s-n_drop) for c, s in zip(c_names, Kl)}
+    pcateg = {c.name(): np.zeros(s-n_drop) for c, s in zip(c_names, Kl)}
     params = {'real': np.zeros(Kx), 'categ': pcateg, **extra}
 
     if hdfe is not None:
@@ -395,12 +413,14 @@ def glm(
 
     # estimate model
     beta, sigma = maxlike_panel(
-        model=model, params=params, data=data, stderr=stderr, disp=disp, **kwargs
+        model=model, params=params, data=data, stderr=stderr, disp=disp1,
+        **kwargs
     )
 
     if hdfe is not None:
         beta['categ'][hdfe] = beta.pop('hdfe')
-        sigma['categ'][hdfe] = {'categ': {hdfe: sigma.pop('hdfe')}}
+        if stderr:
+            sigma['categ'][hdfe] = {'categ': {hdfe: sigma.pop('hdfe')}}
 
     return beta, sigma
 
@@ -442,8 +462,8 @@ def ols_loss(p, yh, y):
     like = -lsigma2 + lstsq_loss(yh, y)/sigma2
     return like
 
-def ols(y=None, x=None, data=None, **kwargs):
+def gols(y=None, x=None, data=None, **kwargs):
     return glm(
-        y=y, x=x, data=data, link='ident', loss=ols_loss, extra={'lsigma2': 0.0},
-        **kwargs
+        y=y, x=x, data=data, link='ident', loss=ols_loss,
+        extra={'lsigma2': 0.0}, **kwargs
     )

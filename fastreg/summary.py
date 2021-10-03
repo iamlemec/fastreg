@@ -18,7 +18,11 @@ z95 = norm.ppf(0.975)
 
 def param_table(beta, sigma, y_name, x_names):
     # standard errors
-    stderr = np.sqrt(sigma.diagonal())
+    if type(sigma) is tuple:
+        sigr, sigc = sigma
+        stderr = np.sqrt(np.hstack([sigr.diagonal(), sigc]))
+    else:
+        stderr = np.sqrt(sigma.diagonal())
 
     # confidence interval
     low95 = beta - z95*stderr

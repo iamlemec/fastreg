@@ -3,6 +3,7 @@
 ##
 
 import numpy as np
+import numpy.linalg as la
 import scipy.sparse as sp
 from itertools import chain
 
@@ -81,3 +82,12 @@ def group_means(x, codes):
         return group_sums(x, codes)/np.bincount(codes)
     else:
         return group_sums(x, codes)/np.bincount(codes)[:, None]
+
+# block inversion with diagonal d
+def block_inverse(A, B, C, d, inv=la.inv):
+    d1 = 1/d
+    d1l, d1r = d1[:, None], d1[None, :]
+    A1 = inv(A - (B*d1r) @ C)
+    Ai = A1
+    di = d1 + np.sum((d1l*C)*(A1 @ (B*d1r)).T, axis=1)
+    return Ai, di

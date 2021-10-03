@@ -111,12 +111,10 @@ class Factor:
         return self.expr
 
     def __add__(self, other):
-        if isinstance(other, Factor):
-            return Formula(Term(self), Term(other))
-        elif isinstance(other, Term):
-            return Formula(Term(self), other)
+        if isinstance(other, (Factor, Term)):
+            return Formula(self, other)
         elif isinstance(other, Formula):
-            return Formula(Term(self), *other)
+            return Formula(self, *other)
 
     def __mul__(self, other):
         if isinstance(other, Factor):
@@ -125,6 +123,9 @@ class Factor:
             return Term(self, *other)
         elif isinstance(other, Formula):
             return Formula(*[Term(self, *t) for t in other])
+
+    def to_term(self):
+        return Term(self)
 
     def name(self):
         return self.expr
@@ -155,9 +156,7 @@ class Term:
         return len(self.facts)
 
     def __add__(self, other):
-        if isinstance(other, Factor):
-            return Formula(self, Term(other))
-        elif isinstance(other, Term):
+        if isinstance(other, (Factor, Term)):
             return Formula(self, other)
         elif isinstance(other, Formula):
             return Formula(self, *other)
@@ -214,7 +213,9 @@ class Term:
 
 class Formula:
     def __init__(self, *terms):
-        self.terms = tuple(dict.fromkeys(terms)) # order preserving unique
+        self.terms = tuple(dict.fromkeys(
+            t if isinstance(t, Term) else Term(t) for t in terms
+        )) # order preserving unique
 
     def __repr__(self):
         return ' + '.join(str(t) for t in self)
@@ -226,12 +227,18 @@ class Formula:
         return len(self.terms)
 
     def __add__(self, other):
-        if isinstance(other, Factor):
-            return Formula(*self, Term(other))
-        elif isinstance(other, Term):
+        if isinstance(other, (Factor, Term)):
             return Formula(*self, other)
         elif isinstance(other, Formula):
             return Formula(*self, *other)
+
+    def __sub__(self, other):
+        if isinstance(other, Factor):
+            other = Term(other)
+        if isinstance(other, Term):
+            return Formula(*[
+                t for t in self if t != other
+            ])
 
     def __mul__(self, other):
         if isinstance(other, Factor):
@@ -260,10 +267,7 @@ class Formula:
             categ_vals, categ_label = None, []
 
         # combine labels
-        if method == 'sparse':
-            categ_label = chainer(categ_label)
-        elif method == 'ordinal':
-            categ_label = {t.name(): ls for t, ls in zip(categ, categ_label)}
+        categ_label = {t: ls for t, ls in zip(categ, categ_label)}
 
         # handle reals
         if len(reals) > 0:
@@ -327,7 +331,7 @@ class Binned(Categ):
     def eval(self, data):
         vals = robust_eval(data, self.expr)
         bins = pd.cut(vals, self.bins, labels=self.labels)
-        return bins + 1
+        return bins
 
 # shortcuts
 I = Term()
@@ -403,15 +407,17 @@ def parse_list(l, convert=Real):
 ## design interface
 ##
 
-def design_matrices(
-    y=None, x=None, formula=None, data=None, method='sparse', drop='first'
-):
+def ensure_formula(y=None, x=None, formula=None):
     if formula is not None:
         y, x = parse_formula(formula)
     else:
         y, x = parse_item(y), parse_list(x)
+    return y, x
 
+def design_matrices(
+    y=None, x=None, formula=None, data=None, method='sparse', drop='first'
+):
+    y, x = ensure_formula(x=x, y=y, formula=formula)
     y_vec, y_name = y.eval(data), y.name()
     x_mat, x_names, c_mat, c_labels = x.eval(data, method=method, drop=drop)
-
     return y_vec, y_name, x_mat, x_names, c_mat, c_labels

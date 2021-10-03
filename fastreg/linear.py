@@ -5,25 +5,39 @@
 import numpy as np
 import scipy.sparse as sp
 
-from .tools import hstack, multiply, ensure_dense, group_sums, group_means
-from .formula import category_indices, design_matrices, parse_tuple, Categ
+from .tools import (
+    hstack, multiply, ensure_dense, group_sums, group_means, chainer,
+    block_inverse
+)
+from .formula import (
+    category_indices, design_matrices, parse_tuple, ensure_formula, Categ
+)
 from .summary import param_table
 
 def ols(
     y=None, x=None, formula=None, data=None, absorb=None, cluster=None,
-    drop='first', method='solve', output='table'
+    hdfe=None, drop='first', output='table'
 ):
+    # convert to formula system
+    y, x = ensure_formula(x=x, y=y, formula=formula)
+
+    # use hdfe trick
+    if hdfe is not None:
+        h_trm = parse_tuple(hdfe, convert=Categ)
+        x = (x - h_trm) + h_trm # pop to end
+
     # make design matrices
-    y_vec, y_name, x0_mat, x0_names, c_mat, c_names = design_matrices(
+    y_vec, y_name, x0_mat, x0_names, c_mat, c_names0 = design_matrices(
         y=y, x=x, formula=formula, data=data, drop=drop
     )
 
     # combine x variables
     x_mat = hstack([x0_mat, c_mat])
+    c_names = chainer(c_names0.values())
     x_names = x0_names + c_names
 
     # data shape
-    N = len(y_vec)
+    N = len(data)
     K = len(x_names)
 
     # use absorption
@@ -45,11 +59,7 @@ def ols(
     # find point estimates
     xpx = x_mat.T @ x_mat
     xpy = x_mat.T @ y_vec
-    ixpx = inv(xpx)
-    if method == 'inv':
-        beta = ixpx @ xpy
-    elif method == 'solve':
-        beta = solve(xpx, xpy)
+    beta = solve(xpx, xpy)
 
     # just the betas
     if output == 'beta':
@@ -59,6 +69,14 @@ def ols(
     y_hat = x_mat @ beta
     e_hat = y_vec - y_hat
 
+    # find inv(xpx) somehow
+    if hdfe is not None:
+        Kh = len(c_names0[h_trm])
+        xh_mat, ch_mat = ensure_dense(x_mat[:, :-Kh]), x_mat[:, -Kh:]
+        ixr, ixc = block_outer_inverse(xh_mat, ch_mat)
+    else:
+        ixpx = inv(xpx)
+
     # find standard errors
     if cluster is not None:
         if absorb is not None:
@@ -67,19 +85,20 @@ def ols(
             c_trm = parse_tuple(cluster, convert=Categ)
             c_mat = c_trm.raw(data)
 
-        # from cameron and miller
-        xe = multiply(x_mat, e_hat[:, None])
-        codes = category_indices(c_mat)
-        xeg = group_sums(xe, codes)
-        xe2 = xeg.T @ xeg
+        # compute sigma
+        xe2 = error_sums(x_mat, c_mat, e_hat)
         sigma = ixpx @ xe2 @ ixpx
     else:
         s2 = (e_hat @ e_hat)/(N-K)
-        sigma = s2*ixpx
+        if hdfe is not None:
+            sigma = s2*ixr, s2*ixc
+        else:
+            sigma = s2*ixpx
 
+    # return requested
     if output == 'table':
         return param_table(beta, sigma, y_name, x_names)
-    else:
+    elif output == 'dict':
         return {
             'beta': beta,
             'sigma': sigma,
@@ -88,6 +107,26 @@ def ols(
             'y_hat': y_hat,
             'e_hat': e_hat,
         }
+
+##
+## standard errors
+##
+
+# inv(X.T @ X) when X = [X D] and D is sparse and diagonal
+def block_outer_inverse(X, D):
+    A = X.T @ X
+    B = X.T @ D
+    C = D.T @ X
+    d = D.power(2).sum(axis=0).getA1()
+    return block_inverse(A, B, C, d)
+
+# from cameron and miller
+def error_sums(X, C, e):
+    xe = multiply(X, e[:, None])
+    codes = category_indices(C)
+    xeg = group_sums(xe, codes)
+    xe2 = xeg.T @ xeg
+    return xe2
 
 ##
 ## absorption
