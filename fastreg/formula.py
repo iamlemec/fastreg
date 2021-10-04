@@ -9,7 +9,9 @@ import pandas as pd
 from itertools import product
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 
-from .tools import categorize, hstack, chainer, strides
+from .tools import (
+    categorize, hstack, chainer, strides, decorator, func_name, func_disp
+)
 
 ##
 ## tools
@@ -30,7 +32,19 @@ def ensure_tuple(t):
         return t,
 
 def robust_eval(data, expr):
-    vals = data.eval(expr, engine='python')
+    # short circuit
+    if expr is None:
+        return None
+
+    # extract values
+    if type(expr) is str:
+        vals = data.eval(expr, engine='python')
+    elif callable(expr):
+        vals = expr(data)
+    else:
+        vals = expr
+
+    # ensure array
     if type(vals) is pd.Series:
         return vals.values
     elif type(vals) is np.ndarray:
@@ -98,8 +112,19 @@ def encode_categorical(vals, names, method='sparse', drop='first'):
 ##
 
 class Factor:
-    def __init__(self, expr):
-        self.expr = expr
+    def __init__(self, expr, name=None):
+        if type(expr) is str:
+            self._expr = expr
+            self._name = expr if name is None else name
+        elif callable(expr):
+            self._expr = expr
+            self._name = name
+        elif type(expr) is pd.Series:
+            self._expr = expr.values
+            self._name = expr.name
+        else:
+            self._expr = np.array(expr)
+            self._name = name
 
     def __hash__(self):
         return hash(str(self))
@@ -108,7 +133,7 @@ class Factor:
         return str(self) == str(other)
 
     def __repr__(self):
-        return self.expr
+        return self._name
 
     def __add__(self, other):
         if isinstance(other, (Factor, Term)):
@@ -128,14 +153,14 @@ class Factor:
         return Term(self)
 
     def name(self):
-        return self.expr
+        return self._name
 
-    def eval(self, data):
-        return robust_eval(data, self.expr)
+    def eval(self, data=None):
+        return robust_eval(data, self._expr)
 
 class Term:
     def __init__(self, *facts):
-        self.facts = facts
+        self._facts = facts
 
     def __hash__(self):
         return hash(tuple(set(self)))
@@ -150,10 +175,10 @@ class Term:
             return '*'.join([str(f) for f in self])
 
     def __iter__(self):
-        return iter(self.facts)
+        return iter(self._facts)
 
     def __len__(self):
-        return len(self.facts)
+        return len(self._facts)
 
     def __add__(self, other):
         if isinstance(other, (Factor, Term)):
@@ -213,7 +238,7 @@ class Term:
 
 class Formula:
     def __init__(self, *terms):
-        self.terms = tuple(dict.fromkeys(
+        self._terms = tuple(dict.fromkeys(
             t if isinstance(t, Term) else Term(t) for t in terms
         )) # order preserving unique
 
@@ -221,10 +246,10 @@ class Formula:
         return ' + '.join(str(t) for t in self)
 
     def __iter__(self):
-        return iter(self.terms)
+        return iter(self._terms)
 
     def __len__(self):
-        return len(self.terms)
+        return len(self._terms)
 
     def __add__(self, other):
         if isinstance(other, (Factor, Term)):
@@ -284,11 +309,6 @@ class Formula:
 ## column types
 ##
 
-## custom columns
-# eval (mandatory): an ndarray of the values
-# name (recommended): what gets displayed in the regression table
-# __repr__ (optional): what gets displayed on print
-
 class Real(Factor):
     def __repr__(self):
         return f'R({self.name()})'
@@ -297,21 +317,23 @@ class Categ(Factor):
     def __repr__(self):
         return f'C({self.name()})'
 
-class Demean(Real):
-    def __init__(self, expr, cond=None):
-        self.expr = expr
-        self.cond = cond
+# custom columns — class interface
+# eval (mandatory): an ndarray of the values
+# name (recommended): what gets displayed in the regression table
+# __repr__ (optional): what gets displayed on print [default to C/R(name)]
 
-    def name(self):
-        args = '' if self.cond is None else f'|{self.cond}'
-        return f'{self.expr}-μ{args}'
+class Demean(Real):
+    def __init__(self, expr, cond=None, **kwargs):
+        args = '' if cond is None else f'|{cond}'
+        super().__init__(expr, name=f'{expr}-μ{args}')
+        self._cond = cond
 
     def eval(self, data):
-        vals = robust_eval(data, self.expr)
-        if self.cond is None:
+        vals = super().eval(data)
+        if self._cond is None:
             means = np.mean(vals)
         else:
-            cond = robust_eval(data, self.cond)
+            cond = robust_eval(data, self._cond)
             datf = pd.DataFrame({'vals': vals, 'cond': cond})
             cmean = datf.groupby('cond')['vals'].mean().rename('mean')
             datf = datf.join(cmean, on='cond')
@@ -320,18 +342,48 @@ class Demean(Real):
 
 class Binned(Categ):
     def __init__(self, expr, bins, labels=False):
-        self.expr = expr
-        self.bins = bins
-        self.labels = None if labels else False
-
-    def name(self):
-        nb = self.bins if type(self.bins) is int else len(self.bins)
-        return f'{self.expr}:bin{nb}'
+        nb = bins if type(bins) is int else len(bins)
+        super().__init__(expr, name=f'{expr}:bin{nb}')
+        self._bins = bins
+        self._labels = None if labels else False
 
     def eval(self, data):
-        vals = robust_eval(data, self.expr)
-        bins = pd.cut(vals, self.bins, labels=self.labels)
+        vals = super().eval(data)
+        bins = pd.cut(vals, self._bins, labels=self._labels)
         return bins
+
+# custom columns — functional interface
+
+# decorator for func(expr) pattern
+@decorator
+def mapper(func, name=None, categ=False):
+    name = func_disp(func) if name is None else name
+    Base = Categ if categ else Real
+    def maker(expr, *args, **kwargs):
+        func1 = lambda data: func(robust_eval(data, expr), *args, **kwargs)
+        name1 = name(expr, *args, **kwargs)
+        return Base(func1, name=name1)
+    return maker
+
+# more general to allow full dataframe access
+@decorator
+def factor(func, name=None, categ=False, eval_args=0):
+    eval_args = ensure_tuple(eval_args)
+    name = func_disp(func) if name is None else name
+    Base = Categ if categ else Real
+    def maker(*args, **kwargs):
+        if eval_args is None:
+            func1 = lambda data: func(data, *args, **kwargs)
+        else:
+            def func1(data):
+                args1 = [
+                    robust_eval(data, e) if i in eval_args else e
+                    for i, e in enumerate(args)
+                ]
+                return func(*args1, **kwargs)
+        name1 = name(*args, **kwargs)
+        return Base(func1, name1)
+    return maker
 
 # shortcuts
 I = Term()

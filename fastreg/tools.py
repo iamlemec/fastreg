@@ -6,6 +6,7 @@ import numpy as np
 import numpy.linalg as la
 import scipy.sparse as sp
 from itertools import chain
+from functools import partial
 
 # general pointwise multiply
 def multiply(a, b):
@@ -91,3 +92,34 @@ def block_inverse(A, B, C, d, inv=la.inv):
     Ai = A1
     di = d1 + np.sum((d1l*C)*(A1 @ (B*d1r)).T, axis=1)
     return Ai, di
+
+##
+## function tools
+##
+
+# decorator with optional flags
+def decorator(decor0):
+    def decor1(func=None, *args, **kwargs):
+        if func is None:
+            def decor2(func1):
+                return decor0(func1, *args, **kwargs)
+            return decor2
+        else:
+            return decor0(func, *args, **kwargs)
+    return decor1
+
+def func_name(func, anon='f'):
+    fname = func.__name__
+    if anon is not None and fname == '<lambda>':
+        fname = anon
+    return fname
+
+def func_args(name, *args, **kwargs):
+    astr = ','.join([f'{a}' for a in args])
+    kstr = ','.join([f'{k}={v}' for k, v in kwargs.items()])
+    sig = '|'.join(filter(len, [astr, kstr]))
+    return f'{name}({sig})'
+
+def func_disp(func, name=None):
+    name = func_name(func) if name is None else name
+    return partial(func_args, name)
