@@ -172,26 +172,13 @@ def popoff(d, s):
     else:
         return d, None
 
-def tree_hessian(model, params, loader, method='deriv', batch_size=1024):
-    N = loader.data_size
-    B = N // batch_size
-    batch_iter = loader(batch_size)
-
-    if method == 'deriv':
-        h_fun = jax.jit(jax.hessian(model))
-        hess = tree_batch_reduce(lambda b: h_fun(params, b), batch_iter)
-        hess = tree_map(lambda x: x/B, hess)
-    elif method == 'outer':
-        tree_axis = tree_map(lambda _: 0, loader.data)
-        g_fun = jax.jit(jax.vmap(jax.grad(model), (None, tree_axis), 0))
-        hess = tree_batch_reduce(
-            lambda b: tree_outer(g_fun(params, b)), batch_iter
-        )
-        hess = tree_map(lambda x: -x/N, hess)
-    else:
-        raise Exception(f'Unknown hessian method: {method}')
-
-    return hess
+def tree_fisher(model, params, loader, method='outer'):
+    tree_axis = tree_map(lambda _: 0, loader.data)
+    g_fun = jax.jit(jax.vmap(jax.grad(model), (None, tree_axis), 0))
+    fish = tree_batch_reduce(
+        lambda b: tree_outer(g_fun(params, b)), loader
+    )
+    return fish
 
 # just get mean and var vectors
 def flatten_output(beta, sigma):
@@ -305,7 +292,7 @@ def maxlike(
 # the assumes the data is batchable, which usually means panel-like
 # a toplevel hdfe variable is treated special-like
 def maxlike_panel(
-    model=None, params=None, data=None, vg_fun=None, hessian='outer',
+    model=None, params=None, data=None, vg_fun=None, method='outer',
     stderr=False, optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu',
     **kwargs
 ):
@@ -322,6 +309,9 @@ def maxlike_panel(
     if not stderr:
         return params1, None
 
+    # loader for stderrs
+    hload = loader(batch_stderr)
+
     if 'hdfe' in params:
         # get vectorized gradient
         tree_axis = tree_map(lambda _: 0, data)
@@ -330,7 +320,6 @@ def maxlike_panel(
         )
 
         # compute hessian inverse by block
-        hload = loader(batch_stderr)
         A, B, C, d = tree_batch_reduce(
             lambda b: tree_outer_flat(vg_fun(params1, b)), hload
         )
@@ -343,12 +332,8 @@ def maxlike_panel(
         sigma = block_unpack(psig, par0_tree, par0_sizs)
         sigma['hdfe'] = hsig
     else:
-        # get model hessian
-        hess = tree_hessian(
-            model, params, loader, method=hessian, batch_size=batch_stderr
-        )
-        fish = tree_matfun(la.inv, hess, params)
-        sigma = tree_map(lambda x: -x/N, fish)
+        fish = tree_fisher(model, params, loader, method=method)
+        sigma = tree_matfun(la.inv, fish, params)
 
     return params1, sigma
 
@@ -382,7 +367,7 @@ def glm_model(link, loss, hdfe=None, drop='first'):
 def glm(
     y=None, x=None, formula=None, hdfe=None, data=None, extra={}, model=None,
     link=None, loss=None, extern=None, stderr=True, drop='first', display=True,
-    output='table', **kwargs
+    epochs=None, per=None, output='table', **kwargs
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -410,6 +395,10 @@ def glm(
     Kc = len(c_names0)
     Kl = [len(c) for c in c_names0.values()]
 
+    # choose number of epochs
+    epochs = max(1, 2_000_000 // N) if epochs is None else epochs
+    per = max(1, epochs // 5) if per is None else per
+
     # compile model if needed
     if model is None:
         model = glm_model(link, loss, hdfe=hdfe, drop=drop)
@@ -421,23 +410,21 @@ def glm(
             categ = categ.copy()
             categ[hdfe] = p['hdfe']
         mcats = np.array([np.mean(c) for c in categ.values()])
-        print(f'[{e:3d}] {l:.4f}: {np.mean(real):.4f} {np.mean(mcats):.4f}')
+        if e % per == 0:
+            print(f'[{e:3d}] {l:.5f}: {np.mean(real):.5f} {np.mean(mcats):.5f}')
     disp1 = disp if display else None
 
-    # organize data
+    # organize data and initial params
     data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
-
-    # initial parameter guesses
     pcateg = {c.name(): np.zeros(s) for c, s in zip(c_names0, Kl)}
     params = {'real': np.zeros(Kx), 'categ': pcateg, **extra}
-
     if hdfe is not None:
         params['hdfe'] = params['categ'].pop(hdfe)
 
     # estimate model
     beta, sigma = maxlike_panel(
         model=model, params=params, data=data, stderr=stderr, disp=disp1,
-        **kwargs
+        epochs=epochs, **kwargs
     )
 
     if hdfe is not None:
