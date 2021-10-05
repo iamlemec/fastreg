@@ -99,6 +99,7 @@ fr.poisson(y='p', x=I+R('x1')+R('x2')+C('id1')+C('id2'), data=data)
 | id1=B |  -0.009 |    0.005 |  -0.018 |    0.000 |    0.057 |
 | id1=C |   0.097 |    0.005 |   0.088 |    0.106 |    0.000 |
 | ...   |         |          |         |          |          |
+
 You can use the `hdfe` flag here as well, for instance:
 ``` python
 fr.poisson(y='p', x=I+R('x1')+R('x2')+C('id1'), hdfe=C('id2'), data=data)
