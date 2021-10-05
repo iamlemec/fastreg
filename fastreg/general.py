@@ -16,7 +16,7 @@ from operator import and_, add
 from .formula import (
     design_matrices, parse_item, parse_tuple, parse_list, ensure_formula, Categ
 )
-from .tools import block_inverse
+from .tools import block_inverse, chainer, maybe_diag
 from .summary import param_table
 
 ##
@@ -193,6 +193,23 @@ def tree_hessian(model, params, loader, method='deriv', batch_size=1024):
 
     return hess
 
+# just get mean and var vectors
+def flatten_output(beta, sigma):
+    beta_real = beta['real']
+    beta_categ = np.hstack([
+        beta['categ'][c] for c in beta['categ']
+    ])
+
+    sigma_real = maybe_diag(sigma['real']['real'])
+    sigma_categ = np.hstack([
+        maybe_diag(sigma['categ'][c]['categ'][c]) for c in sigma['categ']
+    ])
+
+    beta_vec = np.hstack([beta_real, beta_categ])
+    sigma_vec = np.hstack([sigma_real, sigma_categ])
+
+    return beta_vec, sigma_vec
+
 ##
 ## optimizers
 ##
@@ -364,8 +381,8 @@ def glm_model(link, loss, hdfe=None, drop='first'):
 # default glm specification
 def glm(
     y=None, x=None, formula=None, hdfe=None, data=None, extra={}, model=None,
-    link=None, loss=None, drop='first', extern=None, stderr=True, display=True,
-    **kwargs
+    link=None, loss=None, extern=None, stderr=True, drop='first', display=True,
+    output='table', **kwargs
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -377,15 +394,21 @@ def glm(
         hdfe = c_hdfe.name()
 
     # construct design matrices
-    y_vec, y_name, x_mat, x_names, c_mat, c_names = design_matrices(
+    y_vec, y_name, x_mat, x_names, c_mat, c_names0 = design_matrices(
         y=y, x=x, data=data, method='ordinal', extern=extern
     )
+
+    # accumulate all names
+    if drop == 'first':
+        c_names0 = {k: v[1:] for k, v in c_names0.items()}
+    c_names = chainer(c_names0.values())
+    names = x_names + c_names
 
     # get data shape
     N = len(y_vec)
     Kx = len(x_names)
-    Kc = len(c_names)
-    Kl = [len(c) for c in c_names.values()]
+    Kc = len(c_names0)
+    Kl = [len(c) for c in c_names0.values()]
 
     # compile model if needed
     if model is None:
@@ -405,8 +428,7 @@ def glm(
     data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
 
     # initial parameter guesses
-    n_drop = 1 if drop == 'first' else 0 # only have β[1:]
-    pcateg = {c.name(): np.zeros(s-n_drop) for c, s in zip(c_names, Kl)}
+    pcateg = {c.name(): np.zeros(s) for c, s in zip(c_names0, Kl)}
     params = {'real': np.zeros(Kx), 'categ': pcateg, **extra}
 
     if hdfe is not None:
@@ -423,7 +445,14 @@ def glm(
         if stderr:
             sigma['categ'][hdfe] = {'categ': {hdfe: sigma.pop('hdfe')}}
 
-    return beta, sigma
+    if output == 'table':
+        beta_vec, sigma_vec = flatten_output(beta, sigma)
+        return param_table(beta_vec, sigma_vec, y_name, names)
+    elif output == 'dict':
+        return {
+            'beta': beta,
+            'sigma': sigma,
+        }
 
 # logit regression
 def logit(y=None, x=None, data=None, **kwargs):

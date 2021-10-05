@@ -5,6 +5,7 @@
 import numpy as np
 import pandas as pd
 from scipy.stats.distributions import norm
+from .tools import maybe_diag
 
 ##
 ## constants
@@ -20,9 +21,9 @@ def param_table(beta, sigma, y_name, x_names):
     # standard errors
     if type(sigma) is tuple:
         sigr, sigc = sigma
-        stderr = np.sqrt(np.hstack([sigr.diagonal(), sigc]))
+        stderr = np.sqrt(np.hstack([maybe_diag(sigr), sigc]))
     else:
-        stderr = np.sqrt(sigma.diagonal())
+        stderr = np.sqrt(maybe_diag(sigma))
 
     # confidence interval
     low95 = beta - z95*stderr

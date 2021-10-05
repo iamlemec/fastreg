@@ -16,6 +16,13 @@ def multiply(a, b):
 def ensure_dense(x):
     return x.toarray() if sp.issparse(x) else x
 
+# return vector or matrix diagonal
+def maybe_diag(x):
+    if x.ndim == 1:
+        return x
+    else:
+        return x.diagonal()
+
 # handles empty data
 def vstack(v, format='csr'):
     v = [x for x in v if x is not None]

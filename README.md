@@ -91,6 +91,14 @@ We can do GLM now too! The syntax and usage is identical to that of `ols`. For i
 ``` python
 fr.poisson(y='p', x=I+R('x1')+R('x2')+C('id1')+C('id2'), data=data)
 ```
+|       |   coeff |   stderr |   low95 |   high95 |   pvalue |
+|:------|--------:|---------:|--------:|---------:|---------:|
+| I     |   0.408 |    0.011 |   0.386 |    0.430 |    0.000 |
+| x1    |   0.294 |    0.001 |   0.292 |    0.295 |    0.000 |
+| x2    |   0.597 |    0.001 |   0.595 |    0.598 |    0.000 |
+| id1=B |  -0.009 |    0.005 |  -0.018 |    0.000 |    0.057 |
+| id1=C |   0.097 |    0.005 |   0.088 |    0.106 |    0.000 |
+| ...   |         |          |         |          |          |
 You can use the `hdfe` flag here as well, for instance:
 ``` python
 fr.poisson(y='p', x=I+R('x1')+R('x2')+C('id1'), hdfe=C('id2'), data=data)

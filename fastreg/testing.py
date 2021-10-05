@@ -124,9 +124,9 @@ def test_glm(data, estim='poisson', y='p', x=default_x, plot=False, **kwargs):
     if type(estim) is str:
         estim = getattr(general, estim)
 
-    β, Σ = estim(y=y, x=x, data=data, **kwargs)
+    table = estim(y=y, x=x, data=data, **kwargs)
 
     if plot:
-        plot_coeff(β['categ']['id2'])
+        plot_coeff(table['coeff'].filter(regex='id2'))
 
-    return β, Σ
+    return table
