@@ -1,8 +1,8 @@
 # fastreg
 
-Fast sparse regressions. Good for high-dimensional fixed effects.
+Fast sparse regressions with advanced formula syntax. Good for high-dimensional fixed effects.
 
-**New**: maximum likelihood estimation and generalized linear models with JAX (see `general.py`).
+**New**: generalized linear models and maximum likelihood estimation with JAX.
 
 ### Install
 
@@ -27,7 +27,7 @@ from fastreg import I, R, C
 
 Create some testing data
 ``` python
-data = fr.dataset(N=100_000, K1=10, K2=100, models='linear')
+data = fr.dataset(N=100_000, K1=10, K2=100, models=['linear', 'poisson'])
 ```
 
 Regress `y0` on `1`, `x1`, and `x2` given `pandas` DataFrame `data`:
@@ -87,11 +87,7 @@ You can also pass a term to the `absorb` flag to absorb those variables a la Sta
 
 ### Generalized linear models
 
-We can do GLM now too! The syntax and usage is identical to that of `ols`. For instance, to run a Poisson regression, first let's generate some more data
-``` python
-data = fr.dataset(N=100_000, K1=10, K2=100, models='poisson')
-```
-Then run a properly specified Poisson regression:
+We can do GLM now too! The syntax and usage is identical to that of `ols`. For instance, to run a properly specified Poisson regression using our test data:
 ``` python
 fr.poisson(y='p', x=I+R('x1')+R('x2')+C('id1')+C('id2'), data=data)
 ```
