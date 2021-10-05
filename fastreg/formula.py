@@ -31,14 +31,14 @@ def ensure_tuple(t):
     else:
         return t,
 
-def robust_eval(data, expr):
+def robust_eval(data, expr, extern=None):
     # short circuit
     if expr is None:
         return None
 
     # extract values
     if type(expr) is str:
-        vals = data.eval(expr, engine='python')
+        vals = data.eval(expr, engine='python', local_dict=extern)
     elif callable(expr):
         vals = expr(data)
     else:
@@ -155,8 +155,8 @@ class Factor:
     def name(self):
         return self._name
 
-    def eval(self, data=None):
-        return robust_eval(data, self._expr)
+    def eval(self, data=None, extern=None):
+        return robust_eval(data, self._expr, extern=extern)
 
 class Term:
     def __init__(self, *facts):
@@ -197,13 +197,13 @@ class Term:
     def name(self):
         return '*'.join([f.name() for f in self])
 
-    def raw(self, data):
-        return np.vstack([f.eval(data) for f in self]).T
+    def raw(self, data, extern=None):
+        return np.vstack([f.eval(data, extern=extern) for f in self]).T
 
     def enc(self, data):
         return category_indices(self.raw(data))
 
-    def eval(self, data, method='sparse', drop='first'):
+    def eval(self, data, method='sparse', drop='first', extern=None):
         # zero length is identity
         if len(self) == 0:
             return np.ones((len(data), 1)), 'I'
@@ -214,7 +214,7 @@ class Term:
 
         # handle categorical
         if len(categ) > 0:
-            categ_mat = categ.raw(data)
+            categ_mat = categ.raw(data, extern=extern)
             categ_nam = [c.name() for c in categ]
             categ_vals, categ_label = encode_categorical(
                 categ_mat, categ_nam, method=method, drop=drop
@@ -222,7 +222,7 @@ class Term:
 
         # handle reals
         if len(reals) > 0:
-            reals_mat = reals.raw(data)
+            reals_mat = reals.raw(data, extern=extern)
             reals_vals = reals_mat.prod(axis=1).reshape(-1, 1)
             reals_label = reals.name()
 
@@ -278,14 +278,15 @@ class Formula:
     def enc(self, data):
         return np.vstack([t.enc(data) for t in self]).T
 
-    def eval(self, data, method='sparse', drop='first'):
+    def eval(self, data, method='sparse', drop='first', extern=None):
         # split by all real or not
         categ, reals = categorize(is_categorical, self)
 
         # handle categories
         if len(categ) > 0:
             categ_vals, categ_label = zip(*[
-                t.eval(data, method=method, drop=drop) for t in categ
+                t.eval(data, method=method, drop=drop, extern=extern)
+                for t in categ
             ])
             categ_vals = hstack(categ_vals)
         else:
@@ -296,7 +297,9 @@ class Formula:
 
         # handle reals
         if len(reals) > 0:
-            reals_vals, reals_label = zip(*[t.eval(data) for t in reals])
+            reals_vals, reals_label = zip(*[
+                t.eval(data, extern=extern) for t in reals
+            ])
             reals_vals = hstack(reals_vals)
             reals_label = chainer(reals_label)
         else:
@@ -328,12 +331,12 @@ class Demean(Real):
         super().__init__(expr, name=f'{expr}-μ{args}')
         self._cond = cond
 
-    def eval(self, data):
-        vals = super().eval(data)
+    def eval(self, data, extern=None):
+        vals = super().eval(data, extern=extern)
         if self._cond is None:
             means = np.mean(vals)
         else:
-            cond = robust_eval(data, self._cond)
+            cond = robust_eval(data, self._cond, extern=extern)
             datf = pd.DataFrame({'vals': vals, 'cond': cond})
             cmean = datf.groupby('cond')['vals'].mean().rename('mean')
             datf = datf.join(cmean, on='cond')
@@ -347,32 +350,19 @@ class Binned(Categ):
         self._bins = bins
         self._labels = None if labels else False
 
-    def eval(self, data):
-        vals = super().eval(data)
+    def eval(self, data, extern=None):
+        vals = super().eval(data, extern=extern)
         bins = pd.cut(vals, self._bins, labels=self._labels)
         return bins
 
 # custom columns — functional interface
-
-# decorator for func(expr) pattern
 @decorator
-def mapper(func, name=None, categ=False):
-    name = func_disp(func) if name is None else name
-    Base = Categ if categ else Real
-    def maker(expr, *args, **kwargs):
-        func1 = lambda data: func(robust_eval(data, expr), *args, **kwargs)
-        name1 = name(expr, *args, **kwargs)
-        return Base(func1, name=name1)
-    return maker
-
-# more general to allow full dataframe access
-@decorator
-def factor(func, name=None, categ=False, eval_args=0):
+def factor(func, name=None, categ=False, eval_args=0, frame=False):
     eval_args = ensure_tuple(eval_args)
-    name = func_disp(func) if name is None else name
+    name = func_disp(func, name=name) if not callable(name) else name
     Base = Categ if categ else Real
     def maker(*args, **kwargs):
-        if eval_args is None:
+        if frame:
             func1 = lambda data: func(data, *args, **kwargs)
         else:
             def func1(data):
@@ -467,9 +457,12 @@ def ensure_formula(y=None, x=None, formula=None):
     return y, x
 
 def design_matrices(
-    y=None, x=None, formula=None, data=None, method='sparse', drop='first'
+    y=None, x=None, formula=None, data=None, method='sparse', drop='first',
+    extern=None
 ):
     y, x = ensure_formula(x=x, y=y, formula=formula)
-    y_vec, y_name = y.eval(data), y.name()
-    x_mat, x_names, c_mat, c_labels = x.eval(data, method=method, drop=drop)
+    y_vec, y_name = y.eval(data, extern=extern), y.name()
+    x_mat, x_names, c_mat, c_labels = x.eval(
+        data, method=method, drop=drop, extern=extern
+    )
     return y_vec, y_name, x_mat, x_names, c_mat, c_labels

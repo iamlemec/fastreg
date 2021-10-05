@@ -364,7 +364,8 @@ def glm_model(link, loss, hdfe=None, drop='first'):
 # default glm specification
 def glm(
     y=None, x=None, formula=None, hdfe=None, data=None, extra={}, model=None,
-    link=None, loss=None, drop='first', stderr=True, display=True, **kwargs
+    link=None, loss=None, drop='first', extern=None, stderr=True, display=True,
+    **kwargs
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -377,7 +378,7 @@ def glm(
 
     # construct design matrices
     y_vec, y_name, x_mat, x_names, c_mat, c_names = design_matrices(
-        y=y, x=x, data=data, method='ordinal'
+        y=y, x=x, data=data, method='ordinal', extern=extern
     )
 
     # get data shape

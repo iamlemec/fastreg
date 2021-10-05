@@ -16,7 +16,7 @@ from .summary import param_table
 
 def ols(
     y=None, x=None, formula=None, data=None, absorb=None, cluster=None,
-    hdfe=None, drop='first', output='table'
+    hdfe=None, drop='first', extern=None, output='table'
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -28,7 +28,7 @@ def ols(
 
     # make design matrices
     y_vec, y_name, x0_mat, x0_names, c_mat, c_names0 = design_matrices(
-        y=y, x=x, formula=formula, data=data, drop=drop
+        y=y, x=x, formula=formula, data=data, drop=drop, extern=extern
     )
 
     # combine x variables
@@ -45,7 +45,7 @@ def ols(
         cluster = absorb
         x_mat = ensure_dense(x_mat)
         a_trm = parse_tuple(absorb, convert=Categ)
-        a_mat = a_trm.raw(data)
+        a_mat = a_trm.raw(data, extern=extern)
         y_vec, x_mat, keep = absorb_categorical(y_vec, x_mat, a_mat)
 
     # linalg tool select
@@ -83,7 +83,7 @@ def ols(
             c_mat = a_mat[keep, :]
         else:
             c_trm = parse_tuple(cluster, convert=Categ)
-            c_mat = c_trm.raw(data)
+            c_mat = c_trm.raw(data, extern=extern)
 
         # compute sigma
         xe2 = error_sums(x_mat, c_mat, e_hat)

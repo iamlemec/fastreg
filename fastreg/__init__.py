@@ -2,8 +2,9 @@ from . import formula
 from . import linear
 from . import testing
 
-from .formula import Factor, Term, Formula, design_matrices
-from .formula import I, R, C, D, B
+from .formula import (
+    Factor, Term, Formula, I, R, C, D, B, design_matrices, robust_eval, factor
+)
 from .linear import ols
 from .testing import dataset
 
