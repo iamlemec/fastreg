@@ -4,8 +4,7 @@ from jax.scipy.special import gammaln
 import jax.numpy as np
 import jax.numpy.linalg as la
 from jax.tree_util import (
-    tree_flatten, tree_leaves, tree_map, tree_multimap, tree_reduce,
-    tree_structure
+    tree_flatten, tree_leaves, tree_map, tree_reduce, tree_structure
 )
 from jax.interpreters.xla import DeviceArray
 import numpy as np0
@@ -160,13 +159,23 @@ def tree_batch_reduce(batch_fun, loader, agg_fun=np.add):
         if total is None:
             total = f_batch
         else:
-            total = tree_multimap(agg_fun, total, f_batch)
+            total = tree_map(agg_fun, total, f_batch)
     return total
 
 def tree_outer(tree):
     return tree_map(lambda x: tree_map(lambda y: x.T @ y, tree), tree)
 
-def popoff(d, s):
+def tree_outer_flat(tree):
+    tree1, vec = dict_popoff(tree, 'hdfe')
+    leaves = [np.atleast_2d(l.T).T for l in tree_leaves(tree1)]
+    mat = np.hstack(leaves)
+    A = mat.T @ mat
+    B = mat.T @ vec
+    C = vec.T @ mat
+    d = np.sum(vec*vec, axis=0)
+    return A, B, C, d
+
+def dict_popoff(d, s):
     if s in d:
         return {k: v for k, v in d.items() if k != s}, d[s]
     else:
@@ -227,10 +236,10 @@ def adam(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, disp=None):
                 print('Encountered nans!')
                 return params, None
 
-            grms = tree_multimap(
+            grms = tree_map(
                 lambda r, g: gamma*r + (1-gamma)*g**2, grms, grad
             )
-            params = tree_multimap(
+            params = tree_map(
                 lambda p, g, r: p + eta*g/np.sqrt(r+eps), params, grad, grms
             )
 
@@ -250,16 +259,6 @@ def adam(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, disp=None):
 ##
 ## estimation
 ##
-
-def tree_outer_flat(tree):
-    tree1, vec = popoff(tree, 'hdfe')
-    leaves = [np.atleast_2d(l.T).T for l in tree_leaves(tree1)]
-    mat = np.hstack(leaves)
-    A = mat.T @ mat
-    B = mat.T @ vec
-    C = vec.T @ mat
-    d = np.sum(vec*vec, axis=0)
-    return A, B, C, d
 
 # maximum likelihood using jax - this expects a mean log likelihood
 def maxlike(
@@ -326,14 +325,14 @@ def maxlike_panel(
         psig, hsig = block_inverse(A, B, C, d, inv=la.inv)
 
         # unpack into tree
-        par0, _ = popoff(params1, 'hdfe')
+        par0, _ = dict_popoff(params1, 'hdfe')
         par0_tree = tree_structure(par0)
         par0_sizs = [np.size(p) for p in tree_leaves(par0)]
         sigma = block_unpack(psig, par0_tree, par0_sizs)
         sigma['hdfe'] = hsig
     else:
-        fish = tree_fisher(model, params, loader, method=method)
-        sigma = tree_matfun(la.inv, fish, params)
+        fish = tree_fisher(model, params1, loader, method=method)
+        sigma = tree_matfun(la.inv, fish, params1)
 
     return params1, sigma
 
