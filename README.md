@@ -35,10 +35,10 @@ Create some testing data
 data = fr.dataset(N=100_000, K1=10, K2=100, models=['linear', 'poisson'])
 ```
 
-Regress `y0` on `1`, `x1`, and `x2` given `pandas` DataFrame `data`:
+We can construct formulas to define our specification. To make a real `Factor` on `x1`, use `R('x1')` or more conveniently `R.x1`. These can then be combined into `Term`s with `*` and then into `Formula`s with `+`. Regress `y0` on `1`, `x1`, and `x2` given `pandas` DataFrame `data`:
 
 ``` python
-fr.ols(y='y0', x=I+R('x1')+R('x2'), data=data)
+fr.ols(y=R.y0, x=I+R.x1+R.x2, data=data)
 ```
 
 |     |     y0 |     y |     x1 |     x2 | id1   |   id2 |
@@ -51,7 +51,7 @@ fr.ols(y='y0', x=I+R('x1')+R('x2'), data=data)
 Regress `y` on `1`, `x1`, `x2`, categorical `id1`, and categorical `id2`:
 
 ``` python
-fr.ols(y='y', x=I+R('x1')+R('x2')+C('id1')+C('id2'), data=data)
+fr.ols(y=R.y, x=I+R.x1+R.x2+C.id1+C.id2, data=data)
 ```
 
 |    |   coeff |   stderr |   low95 |   high95 |   pvalue |
@@ -63,7 +63,7 @@ fr.ols(y='y', x=I+R('x1')+R('x2')+C('id1')+C('id2'), data=data)
 Regress `y` on `1`, `x1`, `x2`, and all combinations of categoricals `id1` and `id2` (Note that `*` is analogous to `:` in R-style syntax):
 
 ``` python
-fr.ols(y='y', x=I+R('x1')+R('x2')+C('id1')*C('id2'), data=data)
+fr.ols(y=R.y, x=I+R.x1+R.x2+C.id1*C.id2, data=data)
 ```
 
 |             |   coeff |   stderr |   low95 |   high95 |   pvalue |
@@ -84,17 +84,17 @@ fr.ols(formula='y ~ 1 + x1 + x2 + C(id1):C(id2)', data=data)
 There's even a third intermediate option using lists and tuples, which might be more useful when you are defining specifications programmatically:
 
 ``` python
-fr.ols(y='y', x=[I, R('x1'), R('x2'), (C('id1'), C('id2'))], data=data)
+fr.ols(y=R.y, x=[I, R.x1, R.x2, (C.id1, C.id2)], data=data)
 ```
 
 Right now, categorical coding schemes other than treatment are not supported. You can pass a list of column names to `cluster` to cluster standard errors on those variables.
 
 ### High dimensional
 
-Point estimates are obtained efficiently by using a sparse array representation of categorical variables. However, computing standard errors can be costly due to the need for large, dense matrix inversion. It is possible to make clever use of block diagonal properties to quickly compute standard errors for the case of a single (possibly interacted) categorical variable. In this case, we can recover the individual standard errors, but not the full covariance matrix. To employ this, pass a single `Term` (such as `C('id1')` or `C('id1')*C('id2')`) with the `hdfe` flag, as in
+Point estimates are obtained efficiently by using a sparse array representation of categorical variables. However, computing standard errors can be costly due to the need for large, dense matrix inversion. It is possible to make clever use of block diagonal properties to quickly compute standard errors for the case of a single (possibly interacted) categorical variable. In this case, we can recover the individual standard errors, but not the full covariance matrix. To employ this, pass a single `Term` (such as `C.id1` or `C.id1*C.id2`) with the `hdfe` flag, as in
 
 ``` python
-fr.ols(y='y', x=I+R('x1')+R('x2')+C('id1'), hdfe=C('id2'), data=data)
+fr.ols(y='y', x=I+R.x1+R.x2+C.id1, hdfe=C.id2, data=data)
 ```
 
 You can also pass a term to the `absorb` flag to absorb those variables a la Stata's `areg`. In this case you do not recover the standard errors for the absorbed categorical, though it may be faster in the case of multiple high-dimensional regressors. This will automatically cluster standard errors on that term as well, as the errors will in fact be correlated, even if the original data was iid.
@@ -104,7 +104,7 @@ You can also pass a term to the `absorb` flag to absorb those variables a la Sta
 We can do GLM now too! The syntax and usage is identical to that of `ols`. For instance, to run a properly specified Poisson regression using our test data:
 
 ``` python
-fr.poisson(y='p', x=I+R('x1')+R('x2')+C('id1')+C('id2'), data=data)
+fr.poisson(y=R.p, x=I+R.x1+R.x2+C.id1+C.id2, data=data)
 ```
 
 |       |   coeff |   stderr |   low95 |   high95 |   pvalue |
@@ -119,7 +119,7 @@ fr.poisson(y='p', x=I+R('x1')+R('x2')+C('id1')+C('id2'), data=data)
 You can use the `hdfe` flag here as well, for instance:
 
 ``` python
-fr.poisson(y='p', x=I+R('x1')+R('x2')+C('id1'), hdfe=C('id2'), data=data)
+fr.poisson(y=R.p, x=I+R.x1+R.x2+C.id1, hdfe=C.id2, data=data)
 ```
 
 Under the hood, this is all powered by a maximum likelihood estimation routine in `general.py` called `maxlike_panel`. Just give this a function that computes the mean log likelihood and it'll take care of the rest, computing standard errors from the inverse of the Fisher information matrix. This is then specialized into a generalized linear model routine called `glm`, which accepts link and loss functions along with data. I've provided implementations for `logit`, `poisson`, `negbin`, `zinf_poisson`, `zinf_negbin`, and `gols`.
@@ -134,10 +134,10 @@ def Z(x):
     return (x-np.mean(x))/np.std(x)
 ```
 
-The we can using this in a regression such as:
+The we can using this in a regression with either `Z('x1')` or `Z.x1`, as in:
 
 ``` python
-fr.ols(y='y0', x=I+Z('x1')+Z('x2'), data=data)
+fr.ols(y=R.y0, x=I+Z.x1+Z.x2, data=data)
 ```
 
 We may also want factors that use data from multiple columns. In this case we need to use `eval_args` to tell it what expressions to map, as it defaults to only the first argument (`0`). For example, to implement conditional demean (which is also included by default as `fr.D`), we would do:
@@ -150,15 +150,15 @@ def CD(x, i):
     datf = datf.join(cmean, on='cond')
     return datf['vals'] - datf['mean']
 ```
-and then use it in a regression
+and then use it in a regression, though we can't use the convenience syntax with multiple arguments
 
 ``` python
-fr.ols(y='y0', x=I+CD('x1','id1')+CD('x2','id2'), data=data)
+fr.ols(y=R.y0, x=I+CD('x1','id1')+CD('x2','id2'), data=data)
 ```
 
 The `factor` decorator also accepts a `categ` flag that you can set to `True` for categorical variables. Finally, it may be useful to inject functions into the evaluation namespace rather than create a whole new factor type. To do this, you can pass a `dict` to the `extern` flag and prefix the desired variable or function with `@`, as in:
 
 ``` python
 extern = {'logit': lambda x: 1/(1+np.exp(-x))}
-fr.ols(y='y0', x=I+R('@logit(x1)')+R('x2'), data=data, extern=extern)
+fr.ols(y='y0', x=I+R('@logit(x1)')+R.x2, data=data, extern=extern)
 ```

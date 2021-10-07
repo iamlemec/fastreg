@@ -111,7 +111,11 @@ def encode_categorical(vals, names, method='sparse', drop='first'):
 ## formula structure
 ##
 
-class Factor:
+class AccessorType(type):
+    def __getattr__(cls, expr):
+        return cls(expr)
+
+class Factor(metaclass=AccessorType):
     def __init__(self, expr, name=None):
         if type(expr) is str:
             self._expr = expr
@@ -148,6 +152,10 @@ class Factor:
             return Term(self, *other)
         elif isinstance(other, Formula):
             return Formula(*[Term(self, *t) for t in other])
+
+    def __call__(self, *args, **kwargs):
+        cls = type(self)
+        return cls(self._expr, *args, **kwargs)
 
     def to_term(self):
         return Term(self)
@@ -326,9 +334,10 @@ class Categ(Factor):
 # __repr__ (optional): what gets displayed on print [default to C/R(name)]
 
 class Demean(Real):
-    def __init__(self, expr, cond=None, **kwargs):
+    def __init__(self, expr, cond=None, name=None):
         args = '' if cond is None else f'|{cond}'
-        super().__init__(expr, name=f'{expr}-μ{args}')
+        name = expr if name is None else name
+        super().__init__(expr, name=f'{name}-μ{args}')
         self._cond = cond
 
     def eval(self, data, extern=None):
@@ -344,9 +353,10 @@ class Demean(Real):
         return vals - means
 
 class Binned(Categ):
-    def __init__(self, expr, bins, labels=False):
+    def __init__(self, expr, bins=10, labels=False, name=None):
         nb = bins if type(bins) is int else len(bins)
-        super().__init__(expr, name=f'{expr}:bin{nb}')
+        name = expr if name is None else name
+        super().__init__(expr, name=f'{name}:bin{nb}')
         self._bins = bins
         self._labels = None if labels else False
 
@@ -356,24 +366,39 @@ class Binned(Categ):
         return bins
 
 # custom columns — functional interface
-@decorator
-def factor(func, name=None, categ=False, eval_args=0, frame=False):
-    eval_args = ensure_tuple(eval_args)
-    name = func_disp(func, name=name) if not callable(name) else name
-    Base = Categ if categ else Real
-    def maker(*args, **kwargs):
-        if frame:
-            func1 = lambda data: func(data, *args, **kwargs)
+
+class Custom:
+    def __init__(
+        self, func, name=None, categ=False, base=Real, eval_args=0, frame=False
+    ):
+        self._base = Categ if categ else base
+        self._func = func
+        self._name = name if callable(name) else func_disp(func, name=name)
+        self._eval = ensure_tuple(eval_args)
+        self._frame = frame
+
+    def __getattr__(self, key):
+        if key.startswith('_'):
+            return super().__getattr__(key)
         else:
-            def func1(data):
+            return self(key)
+
+    def __call__(self, *args, **kwargs):
+        if self._frame:
+            evaler = lambda data: self._func(data, *args, **kwargs)
+        else:
+            def evaler(data):
                 args1 = [
-                    robust_eval(data, e) if i in eval_args else e
+                    robust_eval(data, e) if i in self._eval else e
                     for i, e in enumerate(args)
                 ]
-                return func(*args1, **kwargs)
-        name1 = name(*args, **kwargs)
-        return Base(func1, name1)
-    return maker
+                return self._func(*args1, **kwargs)
+        name = self._name(*args, **kwargs)
+        return self._base(evaler, name=name)
+
+@decorator
+def factor(func, *args, **kwargs):
+    return Custom(func, *args, **kwargs)
 
 # shortcuts
 I = Term()
