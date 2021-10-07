@@ -181,13 +181,32 @@ def dict_popoff(d, s):
     else:
         return d, None
 
-def tree_fisher(model, params, loader, method='outer'):
-    tree_axis = tree_map(lambda _: 0, loader.data)
-    g_fun = jax.jit(jax.vmap(jax.grad(model), (None, tree_axis), 0))
+def tree_fisher(vg_fun, params, loader):
+    # accumulate outer product
     fish = tree_batch_reduce(
-        lambda b: tree_outer(g_fun(params, b)), loader
+        lambda b: tree_outer(vg_fun(params, b)), loader
     )
-    return fish
+
+    # invert fisher matrix
+    sigma = tree_matfun(la.inv, fish, params)
+
+    return sigma
+
+def diag_fisher(vg_fun, params, loader):
+    # compute hessian inverse by block
+    A, B, C, d = tree_batch_reduce(
+        lambda b: tree_outer_flat(vg_fun(params, b)), loader
+    )
+    psig, hsig = block_inverse(A, B, C, d, inv=la.inv)
+
+    # unpack into tree
+    par0, _ = dict_popoff(params, 'hdfe')
+    par0_flat, par0_tree = tree_flatten(par0)
+    par0_sizs = [np.size(p) for p in par0_flat]
+    sigma = block_unpack(psig, par0_tree, par0_sizs)
+    sigma['hdfe'] = hsig
+
+    return sigma
 
 # just get mean and var vectors
 def flatten_output(beta, sigma):
@@ -291,48 +310,33 @@ def maxlike(
 # the assumes the data is batchable, which usually means panel-like
 # a toplevel hdfe variable is treated special-like
 def maxlike_panel(
-    model=None, params=None, data=None, vg_fun=None, method='outer',
-    stderr=False, optim=adam, batch_size=8192, batch_stderr=8192, backend='gpu',
-    **kwargs
+    model=None, params=None, data=None, vg_fun=None, stderr=True, optim=adam,
+    batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs
 ):
-    if vg_fun is None:
-        vg_fun = jax.jit(jax.value_and_grad(model))
+    # compute gradient for optim
+    vg_fun = jax.jit(jax.value_and_grad(model), backend=backend)
 
     # set up batching
     loader = DataLoader(data, batch_size)
-    N = loader.data_size
 
     # maximize likelihood
     params1 = optim(vg_fun, loader, params, **kwargs)
 
+    # just point estimates
     if not stderr:
         return params1, None
 
-    # loader for stderrs
+    # get vectorized gradient
+    gv_fun = jax.jit(jax.vmap(jax.grad(model), (None, 0), 0), backend=backend)
+
+    # batching for stderr
     hload = loader(batch_stderr)
 
+    # compute standard errors
     if 'hdfe' in params:
-        # get vectorized gradient
-        tree_axis = tree_map(lambda _: 0, data)
-        vg_fun = jax.jit(
-            jax.vmap(jax.grad(model), (None, tree_axis), 0), backend=backend
-        )
-
-        # compute hessian inverse by block
-        A, B, C, d = tree_batch_reduce(
-            lambda b: tree_outer_flat(vg_fun(params1, b)), hload
-        )
-        psig, hsig = block_inverse(A, B, C, d, inv=la.inv)
-
-        # unpack into tree
-        par0, _ = dict_popoff(params1, 'hdfe')
-        par0_tree = tree_structure(par0)
-        par0_sizs = [np.size(p) for p in tree_leaves(par0)]
-        sigma = block_unpack(psig, par0_tree, par0_sizs)
-        sigma['hdfe'] = hsig
+        sigma = diag_fisher(gv_fun, params1, loader)
     else:
-        fish = tree_fisher(model, params1, loader, method=method)
-        sigma = tree_matfun(la.inv, fish, params1)
+        sigma = tree_fisher(gv_fun, params1, loader)
 
     return params1, sigma
 
