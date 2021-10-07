@@ -6,7 +6,13 @@ Fast sparse regressions with advanced formula syntax. Good for high-dimensional 
 
 ### Install
 
-To install directly from GitHub, just run:
+
+To install from PyPI with pip:
+``` bash
+pip install fastreg
+```
+
+To install directly from GitHub:
 
 ``` bash
 pip install git+https://github.com/iamlemec/fastreg
