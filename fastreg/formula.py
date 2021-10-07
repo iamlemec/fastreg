@@ -430,7 +430,11 @@ def parse_term(term):
 
 # this can only handle treatment coding, but that's required for sparsity
 def parse_formula(form):
-    from patsy.desc import ModelDesc
+    try:
+        from patsy.desc import ModelDesc
+    except:
+        print('Please install patsy for formula parsing')
+        return
 
     # use patsy for formula parse
     desc = ModelDesc.from_formula(form)

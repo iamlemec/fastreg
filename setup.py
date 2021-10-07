@@ -9,6 +9,6 @@ setup(
     author_email='thesecretaryofwar@gmail.com',
     license='MIT',
     packages=['fastreg'],
-    install_requires=['numpy', 'scipy', 'pandas', 'sklearn', 'patsy'],
+    install_requires=['numpy', 'scipy', 'pandas', 'sklearn'],
     zip_safe=False
 )

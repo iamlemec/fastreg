@@ -5,6 +5,7 @@
 import numpy as np
 import pandas as pd
 from scipy.stats.distributions import norm
+
 from .tools import maybe_diag
 
 ##
