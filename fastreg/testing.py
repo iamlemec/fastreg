@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from . import linear
 from .formula import I, R, C
@@ -89,6 +88,8 @@ def dataset(N=1_000_000, K1=10, K2=100, models=['linear'], letter=True, seed=893
     return df
 
 def plot_coeff(beta):
+    import matplotlib.pyplot as plt
+
     coeff = pd.DataFrame({
         'id2': np.arange(len(beta)),
         'beta1': beta
