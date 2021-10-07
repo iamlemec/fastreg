@@ -35,18 +35,24 @@ Create some testing data
 data = fr.dataset(N=100_000, K1=10, K2=100, models=['linear', 'poisson'])
 ```
 
-We can construct formulas to define our specification. To make a real `Factor` on `x1`, use `R('x1')` or more conveniently `R.x1`. These can then be combined into `Term`s with `*` and then into `Formula`s with `+`. Regress `y0` on `1`, `x1`, and `x2` given `pandas` DataFrame `data`:
-
-``` python
-fr.ols(y=R.y0, x=I+R.x1+R.x2, data=data)
-```
-
 |     |     y0 |     y |     x1 |     x2 | id1   |   id2 |
 |----:|-------:|------:|-------:|-------:|:------|------:|
 |   0 |  0.140 | 3.450 | -0.260 |  0.958 | E     |    37 |
 |   1 | -0.552 | 0.955 |  0.334 | -1.046 | I     |    65 |
 |   2 | -0.683 | 1.517 |  0.067 | -0.631 | I     |    10 |
 | ... |        |       |        |        |       |       |
+
+We can construct formulas to define our specification. To make a real `Factor` on `x1`, use `R('x1')` or more conveniently `R.x1`. These can then be combined into `Term`s with `*` and then into `Formula`s with `+`. Regress `y0` on `1`, `x1`, and `x2` given `pandas` DataFrame `data`:
+
+``` python
+fr.ols(y=R.y0, x=I+R.x1+R.x2, data=data)
+```
+
+|    |   coeff |   stderr |   low95 |   high95 |   pvalue |
+|:---|--------:|---------:|--------:|---------:|---------:|
+| I  |   0.099 |    0.003 |   0.093 |    0.105 |    0.000 |
+| x1 |   0.304 |    0.003 |   0.297 |    0.310 |    0.000 |
+| x2 |   0.603 |    0.003 |   0.597 |    0.609 |    0.000 |
 
 Regress `y` on `1`, `x1`, `x2`, categorical `id1`, and categorical `id2`:
 
