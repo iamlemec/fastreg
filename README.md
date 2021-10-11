@@ -1,3 +1,5 @@
+<br />
+
 <div align="center">
 <img src="fastreg.svg" alt="fastreg logo"></img>
 </div>
