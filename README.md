@@ -1,3 +1,7 @@
+<div align="center">
+<img src="fastreg.svg" alt="fastreg logo"></img>
+</div>
+
 # fastreg
 
 Fast sparse regressions with advanced formula syntax. Good for high-dimensional fixed effects.
