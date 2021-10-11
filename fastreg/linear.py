@@ -27,7 +27,7 @@ def ols(
         x = (x - h_trm) + h_trm # pop to end
 
     # make design matrices
-    y_vec, y_name, x0_mat, x0_names, c_mat, c_names0 = design_matrices(
+    y_vec, y_name, x0_mat, x0_names, c_mat, c_names0, valid = design_matrices(
         y=y, x=x, formula=formula, data=data, drop=drop, extern=extern
     )
 
@@ -45,7 +45,7 @@ def ols(
         cluster = absorb
         x_mat = ensure_dense(x_mat)
         a_trm = parse_tuple(absorb, convert=Categ)
-        a_mat = a_trm.raw(data, extern=extern)
+        a_mat = a_trm.raw(data[valid], extern=extern)
         y_vec, x_mat, keep = absorb_categorical(y_vec, x_mat, a_mat)
 
     # linalg tool select
@@ -83,7 +83,7 @@ def ols(
             c_mat = a_mat[keep, :]
         else:
             c_trm = parse_tuple(cluster, convert=Categ)
-            c_mat = c_trm.raw(data, extern=extern)
+            c_mat = c_trm.raw(data[valid], extern=extern)
 
         # compute sigma
         xe2 = error_sums(x_mat, c_mat, e_hat)

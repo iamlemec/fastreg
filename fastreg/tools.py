@@ -5,7 +5,7 @@
 import numpy as np
 import numpy.linalg as la
 import scipy.sparse as sp
-from itertools import chain
+from itertools import chain, accumulate
 from functools import partial
 
 # general pointwise multiply
@@ -99,6 +99,30 @@ def block_inverse(A, B, C, d, inv=la.inv):
     Ai = A1
     di = d1 + np.sum((d1l*C)*(A1 @ (B*d1r)).T, axis=1)
     return Ai, di
+
+# try to handle dense and various sparse formats
+def valid_rows(x):
+    fmt = x.format if sp.issparse(x) else None
+    if fmt is None:
+        x = np.atleast_2d(x.T).T
+        null = np.isnan(x).any(axis=1)
+    elif fmt == 'csr':
+        N, _ = x.shape
+        nidx, = np.nonzero(np.isnan(x.data))
+        rows = np.unique(np.digitize(nidx, x.indptr)-1)
+        null = np.isin(np.arange(N), rows)
+    else:
+        print(f'valid_rows: unsupported format "{fmt}"')
+    return ~null
+
+# list based cumsum
+def cumsum(x):
+    return list(accumulate(x))
+
+# split by sizes rather than boundaries
+def split_size(x, s):
+    b = cumsum(s)
+    return np.split(x, b)
 
 ##
 ## function tools

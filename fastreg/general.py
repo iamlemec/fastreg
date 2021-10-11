@@ -382,7 +382,7 @@ def glm(
         hdfe = c_hdfe.name()
 
     # construct design matrices
-    y_vec, y_name, x_mat, x_names, c_mat, c_names0 = design_matrices(
+    y_vec, y_name, x_mat, x_names, c_mat, c_names0, valid = design_matrices(
         y=y, x=x, data=data, method='ordinal', extern=extern
     )
 
@@ -418,7 +418,7 @@ def glm(
     disp1 = disp if display else None
 
     # organize data and initial params
-    data = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
+    dat = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
     pcateg = {c.name(): np.zeros(s) for c, s in zip(c_names0, Kl)}
     params = {'real': np.zeros(Kx), 'categ': pcateg, **extra}
     if hdfe is not None:
@@ -426,7 +426,7 @@ def glm(
 
     # estimate model
     beta, sigma = maxlike_panel(
-        model=model, params=params, data=data, stderr=stderr, disp=disp1,
+        model=model, params=params, data=dat, stderr=stderr, disp=disp1,
         epochs=epochs, **kwargs
     )
 

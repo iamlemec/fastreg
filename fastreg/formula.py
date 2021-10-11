@@ -5,12 +5,14 @@
 import re
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 
 from itertools import product
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 
 from .tools import (
-    categorize, hstack, chainer, strides, decorator, func_name, func_disp
+    categorize, hstack, chainer, strides, decorator, func_name, func_disp,
+    valid_rows, split_size
 )
 
 ##
@@ -106,6 +108,54 @@ def encode_categorical(vals, names, method='sparse', drop='first'):
     cats_used = [categ_labels[i] for i in cats_all]
 
     return cats_enc, cats_used
+
+def drop_invalid(*mats, warn=True):
+    # generate null row mask
+    valid = np.vstack([
+        valid_rows(m) for m in mats if m is not None
+    ]).all(axis=0)
+    V, N = np.sum(valid), len(valid)
+
+    # subset data if needed
+    if V == 0:
+        raise Exception('all rows contain null data')
+    elif V < N:
+        if warn:
+            print(f'dropping {N-V}/{N} null data points')
+        mats = [m[valid] for m in mats]
+
+    # return mask and values
+    return *mats, valid
+
+# remove unused categories (sparse `mat` requires `labels`)
+def prune_categories(mat, labels=None, method='sparse', warn=True):
+    # get positive count cats
+    if method == 'sparse':
+        vcats = np.ravel(mat.sum(axis=0)) > 0
+        Kt = [len(ls) for ls in labels.values()]
+        tvalid = split_size(vcats, Kt)
+        P, K = np.sum(vcats), len(vcats)
+    elif method == 'ordinal':
+        vcats = [np.bincount(cm) > 0 for cm in mat.T]
+        P = sum([np.sum(vc) for vc in vcats])
+        K = sum([len(vc) for vc in vcats])
+
+    # prune if needed
+    if P < K:
+        if warn:
+            print(f'pruning {K-P}/{K} unused categories')
+
+        # modify data matrix
+        if method == 'sparse':
+            mat = mat[:, vcats]
+            labels = {
+                t: [l for l, v in zip(ls, vs) if v]
+                for (t, ls), vs in zip(labels.items(), tvalid)
+            }
+        elif method == 'ordinal':
+            mat = np.vstack([category_indices(cm) for cm in mat.T]).T
+
+    return mat, labels
 
 ##
 ## formula structure
@@ -208,9 +258,6 @@ class Term:
     def raw(self, data, extern=None):
         return np.vstack([f.eval(data, extern=extern) for f in self]).T
 
-    def enc(self, data):
-        return category_indices(self.raw(data))
-
     def eval(self, data, method='sparse', drop='first', extern=None):
         # zero length is identity
         if len(self) == 0:
@@ -282,9 +329,6 @@ class Formula:
             return Formula(*chainer([
                 [Term(*t1, *t2) for t1 in self] for t2 in other
             ]))
-
-    def enc(self, data):
-        return np.vstack([t.enc(data) for t in self]).T
 
     def eval(self, data, method='sparse', drop='first', extern=None):
         # split by all real or not
@@ -487,11 +531,30 @@ def ensure_formula(y=None, x=None, formula=None):
 
 def design_matrices(
     y=None, x=None, formula=None, data=None, method='sparse', drop='first',
-    extern=None
+    dropna='warn', prune='warn', extern=None
 ):
+    # parse into pythonic formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
+
+    # evaluate x and y variables
     y_vec, y_name = y.eval(data, extern=extern), y.name()
     x_mat, x_names, c_mat, c_labels = x.eval(
         data, method=method, drop=drop, extern=extern
     )
-    return y_vec, y_name, x_mat, x_names, c_mat, c_labels
+
+    # drop null rows if requested
+    if dropna:
+        y_vec, x_mat, c_mat, valid = drop_invalid(
+            y_vec, x_mat, c_mat, warn=(dropna=='warn')
+        )
+    else:
+        valid = None
+
+    # prune empty categories
+    if prune and c_mat is not None:
+        c_mat, c_labels = prune_categories(
+            c_mat, c_labels, method=method, warn=(prune=='warn')
+        )
+
+    # return full info
+    return y_vec, y_name, x_mat, x_names, c_mat, c_labels, valid
