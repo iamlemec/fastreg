@@ -1,7 +1,7 @@
 <br />
 
 <div align="center">
-<img src="fastreg.svg" alt="fastreg logo"></img>
+<img src="content/fastreg_path.svg" alt="fastreg logo"></img>
 </div>
 
 <br />
