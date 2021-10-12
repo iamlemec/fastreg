@@ -10,6 +10,7 @@ import scipy.sparse as sp
 from itertools import product
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 
+from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
 from .tools import (
     categorize, hstack, chainer, strides, decorator, func_name, func_disp,
     valid_rows, split_size
@@ -20,9 +21,9 @@ from .tools import (
 ##
 
 def is_categorical(ft):
-    if isinstance(ft, Factor):
-        return isinstance(ft, Categ)
-    elif isinstance(ft, Term):
+    if isinstance(ft, MetaFactor):
+        return isinstance(ft, MetaCateg)
+    elif isinstance(ft, MetaTerm):
         return any(is_categorical(t) for t in ft)
 
 def ensure_tuple(t):
@@ -84,28 +85,24 @@ def category_indices(vals, return_labels=False):
     else:
         return ord_cross
 
-# this is mildly inefficient in the case of overlap
+# TODO: this can't handle NaNs currently
 def encode_categorical(vals, names, method='sparse', drop='first'):
     # reindex categoricals jointly
     categ_vals, categ_labels = category_indices(vals, return_labels=True)
     categ_vals = categ_vals.reshape(-1, 1)
     categ_labels = [swizzle(names, l) for l in categ_labels]
 
-    # encode indices with chosen method
     # if ordinal no labels are dropped
     if method == 'ordinal':
-        enc = OrdinalEncoder(categories='auto', dtype=int)
-        cats_enc = enc.fit_transform(categ_vals)
-        cats_all, = enc.categories_
+        cats_enc, cats_used = categ_vals, categ_labels
     elif method == 'sparse':
         enc = OneHotEncoder(categories='auto', drop=drop, dtype=int)
         cats_enc = enc.fit_transform(categ_vals)
         cats_all, = enc.categories_
         if enc.drop_idx_ is not None:
-            cats_all = np.delete(cats_all, enc.drop_idx_[0])
-
-    # get used lables
-    cats_used = [categ_labels[i] for i in cats_all]
+            drop_idx = enc.drop_idx_.astype(int)
+            cats_all = np.delete(cats_all, drop_idx)
+        cats_used = [categ_labels[i] for i in cats_all]
 
     return cats_enc, cats_used
 
@@ -165,7 +162,7 @@ class AccessorType(type):
     def __getattr__(cls, expr):
         return cls(expr)
 
-class Factor(metaclass=AccessorType):
+class Factor(MetaFactor, metaclass=AccessorType):
     def __init__(self, expr, name=None):
         if type(expr) is str:
             self._expr = expr
@@ -190,17 +187,17 @@ class Factor(metaclass=AccessorType):
         return self._name
 
     def __add__(self, other):
-        if isinstance(other, (Factor, Term)):
+        if isinstance(other, (MetaFactor, MetaTerm)):
             return Formula(self, other)
-        elif isinstance(other, Formula):
+        elif isinstance(other, MetaFormula):
             return Formula(self, *other)
 
     def __mul__(self, other):
-        if isinstance(other, Factor):
+        if isinstance(other, MetaFactor):
             return Term(self, other)
-        elif isinstance(other, Term):
+        elif isinstance(other, MetaTerm):
             return Term(self, *other)
-        elif isinstance(other, Formula):
+        elif isinstance(other, MetaFormula):
             return Formula(*[Term(self, *t) for t in other])
 
     def __call__(self, *args, **kwargs):
@@ -216,7 +213,7 @@ class Factor(metaclass=AccessorType):
     def eval(self, data=None, extern=None):
         return robust_eval(data, self._expr, extern=extern)
 
-class Term:
+class Term(MetaTerm):
     def __init__(self, *facts):
         self._facts = facts
 
@@ -239,17 +236,17 @@ class Term:
         return len(self._facts)
 
     def __add__(self, other):
-        if isinstance(other, (Factor, Term)):
+        if isinstance(other, (MetaFactor, MetaTerm)):
             return Formula(self, other)
-        elif isinstance(other, Formula):
+        elif isinstance(other, MetaFormula):
             return Formula(self, *other)
 
     def __mul__(self, other):
-        if isinstance(other, Factor):
+        if isinstance(other, MetaFactor):
             return Term(*self, other)
-        elif isinstance(other, Term):
+        elif isinstance(other, MetaTerm):
             return Term(*self, *other)
-        elif isinstance(other, Formula):
+        elif isinstance(other, MetaFormula):
             return Formula(*[Term(*self, *t) for t in other])
 
     def name(self):
@@ -291,7 +288,7 @@ class Term:
             term_label = [f'({l})*{reals_label}' for l in categ_label]
             return term_vals, term_label
 
-class Formula:
+class Formula(MetaFormula):
     def __init__(self, *terms):
         self._terms = tuple(dict.fromkeys(
             t if isinstance(t, Term) else Term(t) for t in terms
@@ -307,25 +304,25 @@ class Formula:
         return len(self._terms)
 
     def __add__(self, other):
-        if isinstance(other, (Factor, Term)):
+        if isinstance(other, (MetaFactor, MetaTerm)):
             return Formula(*self, other)
-        elif isinstance(other, Formula):
+        elif isinstance(other, MetaFormula):
             return Formula(*self, *other)
 
     def __sub__(self, other):
-        if isinstance(other, Factor):
+        if isinstance(other, MetaFactor):
             other = Term(other)
-        if isinstance(other, Term):
+        if isinstance(other, MetaTerm):
             return Formula(*[
                 t for t in self if t != other
             ])
 
     def __mul__(self, other):
-        if isinstance(other, Factor):
+        if isinstance(other, MetaFactor):
             return Formula(*[Term(*t, other) for t in self])
-        elif isinstance(other, Term):
+        elif isinstance(other, MetaTerm):
             return Formula(*[Term(*t, *other) for t in self])
-        elif isinstance(other, Formula):
+        elif isinstance(other, MetaFormula):
             return Formula(*chainer([
                 [Term(*t1, *t2) for t1 in self] for t2 in other
             ]))
@@ -364,11 +361,11 @@ class Formula:
 ## column types
 ##
 
-class Real(Factor):
+class Real(MetaReal, Factor):
     def __repr__(self):
         return f'R({self.name()})'
 
-class Categ(Factor):
+class Categ(MetaCateg, Factor):
     def __repr__(self):
         return f'C({self.name()})'
 
