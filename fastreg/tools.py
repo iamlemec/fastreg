@@ -43,13 +43,6 @@ def hstack(v, format='csr'):
     else:
         return np.hstack(v)
 
-# this assumes row major to align with product
-def strides(v):
-    if len(v) == 1:
-        return np.array([1])
-    else:
-        return np.r_[1, np.cumprod(v[1:])][::-1]
-
 # concat lists
 def chainer(v):
     return list(chain.from_iterable(v))
@@ -154,3 +147,24 @@ def func_args(name, *args, **kwargs):
 def func_disp(func, name=None):
     name = func_name(func) if name is None else name
     return partial(func_args, name)
+
+##
+## semi-defunct tools
+##
+
+def category_indices_numeric(vals, return_labels=False):
+    # get unique indices
+    labs, indx = np.unique(vals, axis=0, return_inverse=True)
+
+    # patch in nans as -1
+    nan_loc = np.flatnonzero(np.isnan(labs).any(axis=-1))
+    if len(nan_loc) > 0:
+        labs1 = np.delete(labs, nan_loc, axis=0)
+        indx1 = np.where(np.isin(indx, nan_loc), -1, indx)
+        _, indx2 = np.unique(indx1, return_inverse=True)
+        indx, labs = indx2-1, labs1
+
+    if return_labels:
+        return indx, list(map(tuple, labs))
+    else:
+        return indx

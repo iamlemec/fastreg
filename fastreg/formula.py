@@ -7,12 +7,11 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from itertools import product
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 
 from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
 from .tools import (
-    categorize, hstack, chainer, strides, decorator, func_name, func_disp,
+    categorize, hstack, chainer, decorator, func_name, func_disp,
     valid_rows, split_size
 )
 
@@ -66,24 +65,24 @@ def swizzle(ks, vs):
 # ordinally encode interactions terms (tuple-like things)
 def category_indices(vals, return_labels=False):
     if vals.ndim == 1:
-        vals = vals[:, None]
+        vals = np.atleast_2d(vals.T).T
 
     # convert to packed integers
     ord_enc = OrdinalEncoder(categories='auto', dtype=int)
     ord_vals = ord_enc.fit_transform(vals)
     ord_cats = ord_enc.categories_
 
-    # interact with product
-    ord_sizes = [len(x) for x in ord_cats]
-    ord_strides = strides(ord_sizes)
-    ord_cross = ord_vals @ ord_strides
+    # find unique rows
+    uni_vals, uni_indx = np.unique(ord_vals, axis=0, return_inverse=True)
 
     # return requested
     if return_labels:
-        ord_labels = list(product(*ord_cats))
-        return ord_cross, ord_labels
+        uni_labs = list(zip(*[
+            oc[uv] for oc, uv in zip(ord_cats, uni_vals.T)
+        ]))
+        return uni_indx, uni_labs
     else:
-        return ord_cross
+        return uni_indx
 
 # TODO: this can't handle NaNs currently
 def encode_categorical(vals, names, method='sparse', drop='first'):
