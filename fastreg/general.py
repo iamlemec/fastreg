@@ -15,7 +15,7 @@ from operator import and_, add
 from .formula import (
     design_matrices, parse_item, parse_tuple, parse_list, ensure_formula, Categ
 )
-from .tools import block_inverse, chainer, maybe_diag
+from .tools import block_inverse, chainer, maybe_diag, atleast_2d
 from .summary import param_table
 
 ##
@@ -116,13 +116,6 @@ class OneLoader:
 def chunks(v, n):
     return [v[i:i+n] for i in range(0, len(v), n)]
 
-# need to handle ambiguity in case x.ndim == 1
-def atleast_2d(x, axis=0):
-    x2 = np.atleast_2d(x)
-    if x.ndim == 1 and axis == 0:
-        x2 = x2.T
-    return x2
-
 def block_matrix(tree, dims, size):
     blocks = chunks(tree_leaves(tree), size)
     mat = np.block([
@@ -167,7 +160,7 @@ def tree_outer(tree):
 
 def tree_outer_flat(tree):
     tree1, vec = dict_popoff(tree, 'hdfe')
-    leaves = [np.atleast_2d(l.T).T for l in tree_leaves(tree1)]
+    leaves = [atleast_2d(l) for l in tree_leaves(tree1)]
     mat = np.hstack(leaves)
     A = mat.T @ mat
     B = mat.T @ vec

@@ -12,7 +12,7 @@ from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
 from .tools import (
     categorize, hstack, chainer, decorator, func_name, func_disp,
-    valid_rows, split_size
+    valid_rows, split_size, atleast_2d, fillna, all_valid
 )
 
 ##
@@ -62,72 +62,86 @@ def robust_eval(data, expr, extern=None):
 def swizzle(ks, vs):
     return ','.join([f'{k}={v}' for k, v in zip(ks, vs)])
 
-# ordinally encode interactions terms (tuple-like things)
+# ordinally encode interaction terms (tuple-like things)
 def category_indices(vals, return_labels=False):
-    if vals.ndim == 1:
-        vals = np.atleast_2d(vals.T).T
+    # also accept single vectors
+    vals = atleast_2d(vals)
+    N, _ = vals.shape
+
+    # track valid rows
+    valid = valid_rows(vals)
+    vals1 = vals[valid]
 
     # convert to packed integers
     ord_enc = OrdinalEncoder(categories='auto', dtype=int)
-    ord_vals = ord_enc.fit_transform(vals)
+    ord_vals = ord_enc.fit_transform(vals1)
     ord_cats = ord_enc.categories_
 
     # find unique rows
     uni_vals, uni_indx = np.unique(ord_vals, axis=0, return_inverse=True)
+
+    # patch in valid data
+    uni_ind1 = -np.ones(N, dtype=int)
+    uni_ind1[valid] = uni_indx
 
     # return requested
     if return_labels:
         uni_labs = list(zip(*[
             oc[uv] for oc, uv in zip(ord_cats, uni_vals.T)
         ]))
-        return uni_indx, uni_labs
+        return uni_ind1, uni_labs, valid
     else:
-        return uni_indx
+        return uni_ind1, valid
 
-# TODO: this can't handle NaNs currently
+# encode categories as one-hot matrix
 def encode_categorical(vals, names, method='sparse', drop='first'):
     # reindex categoricals jointly
-    categ_vals, categ_labels = category_indices(vals, return_labels=True)
-    categ_vals = categ_vals.reshape(-1, 1)
-    categ_labels = [swizzle(names, l) for l in categ_labels]
+    cats_val, cats_lab, valid = category_indices(vals, return_labels=True)
+    cats_val = cats_val.reshape(-1, 1)
+    cats_lab = [swizzle(names, l) for l in cats_lab]
 
     # if ordinal no labels are dropped
     if method == 'ordinal':
-        cats_enc, cats_used = categ_vals, categ_labels
+        cats_enc, cats_use = cats_val, cats_lab
     elif method == 'sparse':
-        enc = OneHotEncoder(categories='auto', drop=drop, dtype=int)
-        cats_enc = enc.fit_transform(categ_vals)
+        # one-hot encode ignoring -1 with drop
+        cat_min = 1 if drop == 'first' else 0
+        cat_max = cats_val.max() + 1
+        icats = np.arange(cat_min, cat_max)
+
+        # make matrix and categories
+        enc = OneHotEncoder(
+            categories=[icats], dtype=int, handle_unknown='ignore'
+        )
+        cats_enc = enc.fit_transform(cats_val)
         cats_all, = enc.categories_
+
+        # get list of used categories
         if enc.drop_idx_ is not None:
             drop_idx = enc.drop_idx_.astype(int)
             cats_all = np.delete(cats_all, drop_idx)
-        cats_used = [categ_labels[i] for i in cats_all]
+        cats_use = [cats_lab[i] for i in cats_all]
 
-    return cats_enc, cats_used
+    return cats_enc, cats_use, valid
 
-def drop_invalid(*mats, warn=True):
-    # generate null row mask
-    valid = np.vstack([
-        valid_rows(m) for m in mats if m is not None
-    ]).all(axis=0)
+# subset data allowing for missing chunks
+def drop_invalid(valid, *mats, warn=True):
     V, N = np.sum(valid), len(valid)
-
-    # subset data if needed
     if V == 0:
         raise Exception('all rows contain null data')
     elif V < N:
         if warn:
             print(f'dropping {N-V}/{N} null data points')
-        mats = [m[valid] for m in mats]
-
-    # return mask and values
-    return *mats, valid
+        mats = [
+            m[valid] if m is not None else None for m in mats
+        ]
+    return *mats,
 
 # remove unused categories (sparse `mat` requires `labels`)
 def prune_categories(mat, labels=None, method='sparse', warn=True):
     # get positive count cats
     if method == 'sparse':
-        vcats = np.ravel(mat.sum(axis=0)) > 0
+        vcats = np.ravel((mat!=0).sum(axis=0)) > 0
         Kt = [len(ls) for ls in labels.values()]
         tvalid = split_size(vcats, Kt)
         P, K = np.sum(vcats), len(vcats)
@@ -257,7 +271,8 @@ class Term(MetaTerm):
     def eval(self, data, method='sparse', drop='first', extern=None):
         # zero length is identity
         if len(self) == 0:
-            return np.ones((len(data), 1)), 'I'
+            N = len(data)
+            return np.ones((N, 1)), np.ones(N, dtype=bool), ['I']
 
         # separate pure real and categorical
         categ, reals = categorize(is_categorical, self)
@@ -267,30 +282,33 @@ class Term(MetaTerm):
         if len(categ) > 0:
             categ_mat = categ.raw(data, extern=extern)
             categ_nam = [c.name() for c in categ]
-            categ_vals, categ_label = encode_categorical(
+            categ_value, categ_label, categ_valid = encode_categorical(
                 categ_mat, categ_nam, method=method, drop=drop
             )
 
         # handle reals
         if len(reals) > 0:
             reals_mat = reals.raw(data, extern=extern)
-            reals_vals = reals_mat.prod(axis=1).reshape(-1, 1)
+            reals_value = reals_mat.prod(axis=1).reshape(-1, 1)
             reals_label = reals.name()
+            reals_valid = valid_rows(reals_value)
 
         # combine results
         if len(categ) == 0:
-            return reals_vals, [reals_label]
+            return reals_value, reals_valid, [reals_label]
         elif len(reals) == 0:
-            return categ_vals, categ_label
+            return categ_value, categ_valid, categ_label
         else:
-            term_vals = categ_vals.multiply(reals_vals)
+            # filling nulls with 0 keeps sparse the same
+            term_value = categ_value.multiply(fillna(reals_value, v=0))
             term_label = [f'({l})*{reals_label}' for l in categ_label]
-            return term_vals, term_label
+            term_valid = categ_valid & reals_valid
+            return term_value, term_valid, term_label
 
 class Formula(MetaFormula):
     def __init__(self, *terms):
         self._terms = tuple(dict.fromkeys(
-            t if isinstance(t, Term) else Term(t) for t in terms
+            t if isinstance(t, MetaTerm) else Term(t) for t in terms
         )) # order preserving unique
 
     def __repr__(self):
@@ -332,29 +350,34 @@ class Formula(MetaFormula):
 
         # handle categories
         if len(categ) > 0:
-            categ_vals, categ_label = zip(*[
+            categ_value, categ_valid, categ_label = zip(*[
                 t.eval(data, method=method, drop=drop, extern=extern)
                 for t in categ
             ])
-            categ_vals = hstack(categ_vals)
+            categ_value = hstack(categ_value)
+            categ_valid = np.vstack(categ_valid).all(axis=0)
         else:
-            categ_vals, categ_label = None, []
+            categ_value, categ_valid, categ_label = None, None, []
 
         # combine labels
         categ_label = {t: ls for t, ls in zip(categ, categ_label)}
 
         # handle reals
         if len(reals) > 0:
-            reals_vals, reals_label = zip(*[
+            reals_value, reals_valid, reals_label = zip(*[
                 t.eval(data, extern=extern) for t in reals
             ])
-            reals_vals = hstack(reals_vals)
+            reals_value = hstack(reals_value)
             reals_label = chainer(reals_label)
+            reals_valid = np.vstack(reals_valid).all(axis=0)
         else:
-            reals_vals, reals_label = None, []
+            reals_value, reals_valid, reals_label = None, None, []
 
         # return separately
-        return reals_vals, reals_label, categ_vals, categ_label
+        return (
+            reals_value, reals_valid, reals_label,
+            categ_value, categ_valid, categ_label
+        )
 
 ##
 ## column types
@@ -489,13 +512,13 @@ def parse_formula(form):
         return x_terms
 
 def parse_item(i, convert=Real):
-    if isinstance(i, Factor):
+    if isinstance(i, MetaFactor):
         return i
     else:
         return convert(i)
 
 def parse_tuple(t, convert=Real):
-    if isinstance(t, Term):
+    if isinstance(t, MetaTerm):
         return t
     else:
         if type(t) not in (tuple, list):
@@ -505,7 +528,7 @@ def parse_tuple(t, convert=Real):
         ])
 
 def parse_list(l, convert=Real):
-    if isinstance(l, Formula):
+    if isinstance(l, MetaFormula):
         return l
     else:
         if type(l) not in (tuple, list):
@@ -527,29 +550,31 @@ def ensure_formula(y=None, x=None, formula=None):
 
 def design_matrices(
     y=None, x=None, formula=None, data=None, method='sparse', drop='first',
-    dropna='warn', prune='warn', extern=None
+    dropna=True, prune=True, warn=True, extern=None
 ):
     # parse into pythonic formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
 
     # evaluate x and y variables
     y_vec, y_name = y.eval(data, extern=extern), y.name()
-    x_mat, x_names, c_mat, c_labels = x.eval(
+    x_mat, x_val, x_names, c_mat, c_val, c_labels = x.eval(
         data, method=method, drop=drop, extern=extern
     )
 
-    # drop null rows if requested
-    if dropna:
-        y_vec, x_mat, c_mat, valid = drop_invalid(
-            y_vec, x_mat, c_mat, warn=(dropna=='warn')
-        )
-    else:
-        valid = None
+    # aggregate valid info for data
+    y_val = valid_rows(y_vec)
+    valid = all_valid(y_val, x_val, c_val)
 
-    # prune empty categories
+    # drop null values if requested
+    if dropna:
+        y_vec, x_mat, c_mat = drop_invalid(
+            valid, y_vec, x_mat, c_mat, warn=warn
+        )
+
+    # prune empty categories if requested
     if prune and c_mat is not None:
         c_mat, c_labels = prune_categories(
-            c_mat, c_labels, method=method, warn=(prune=='warn')
+            c_mat, c_labels, method=method, warn=warn
         )
 
     # return full info

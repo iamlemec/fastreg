@@ -121,9 +121,10 @@ def block_outer_inverse(X, D):
     return block_inverse(A, B, C, d)
 
 # from cameron and miller
+# null C values will lead to -1 group
 def error_sums(X, C, e):
     xe = multiply(X, e[:, None])
-    codes = category_indices(C)
+    codes, _ = category_indices(C)
     xeg = group_sums(xe, codes)
     xe2 = xeg.T @ xeg
     return xe2
@@ -132,6 +133,7 @@ def error_sums(X, C, e):
 ## absorption
 ##
 
+# will absorb null (-1) values together
 def absorb_categorical(y, x, abs):
     N, K = x.shape
     _, A = abs.shape
@@ -150,7 +152,7 @@ def absorb_categorical(y, x, abs):
     # do this iteratively to reduce data loss
     for j in range(A):
         # create class groups
-        codes = category_indices(abs[:, j])
+        codes, _ = category_indices(abs[:, j])
 
         # perform differencing on y
         avg_y = group_means(y, codes)

@@ -3,6 +3,7 @@
 ##
 
 import numpy as np
+import pandas as pd
 import numpy.linalg as la
 import scipy.sparse as sp
 from itertools import chain, accumulate
@@ -15,6 +16,16 @@ def multiply(a, b):
 # make a sparse matrix dense
 def ensure_dense(x):
     return x.toarray() if sp.issparse(x) else x
+
+# make a row vector into a matrix, maybe
+def atleast_2d(x, axis=0):
+    if x.ndim < 2:
+        if axis == 0:
+            return x.reshape((-1, 1))
+        else:
+            return x.reshape((1, -1))
+    else:
+        return x
 
 # return vector or matrix diagonal
 def maybe_diag(x):
@@ -93,12 +104,16 @@ def block_inverse(A, B, C, d, inv=la.inv):
     di = d1 + np.sum((d1l*C)*(A1 @ (B*d1r)).T, axis=1)
     return Ai, di
 
+# do isnan on general ndarrays
+def fillna(x, v=0):
+    return np.where(np.isnan(x), v, x)
+
 # try to handle dense and various sparse formats
 def valid_rows(x):
     fmt = x.format if sp.issparse(x) else None
     if fmt is None:
-        x = np.atleast_2d(x.T).T
-        null = np.isnan(x).any(axis=1)
+        null = ~pd.isnull(x)
+        return null if x.ndim == 1 else null.any(axis=1)
     elif fmt == 'csr':
         N, _ = x.shape
         nidx, = np.nonzero(np.isnan(x.data))
@@ -107,6 +122,9 @@ def valid_rows(x):
     else:
         print(f'valid_rows: unsupported format "{fmt}"')
     return ~null
+
+def all_valid(*mats):
+    return np.vstack([m for m in mats if m is not None]).all(axis=0)
 
 # list based cumsum
 def cumsum(x):
