@@ -3,6 +3,7 @@
 ##
 
 import re
+import sys
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -12,7 +13,7 @@ from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
 from .tools import (
     categorize, hstack, chainer, decorator, func_name, func_disp,
-    valid_rows, split_size, atleast_2d, fillna, all_valid
+    valid_rows, split_size, atleast_2d, fillna, all_valid, splice
 )
 
 ##
@@ -63,7 +64,8 @@ def swizzle(ks, vs):
     return ','.join([f'{k}={v}' for k, v in zip(ks, vs)])
 
 # ordinally encode interaction terms (tuple-like things)
-def category_indices(vals, return_labels=False):
+# null data is returned with a -1 index if not dropna
+def category_indices(vals, dropna=False, return_labels=False):
     # also accept single vectors
     vals = atleast_2d(vals)
     N, _ = vals.shape
@@ -81,8 +83,10 @@ def category_indices(vals, return_labels=False):
     uni_vals, uni_indx = np.unique(ord_vals, axis=0, return_inverse=True)
 
     # patch in valid data
-    uni_ind1 = -np.ones(N, dtype=int)
-    uni_ind1[valid] = uni_indx
+    if dropna:
+        uni_ind1 = uni_indx
+    else:
+        uni_ind1 = splice(valid, uni_indx, -1)
 
     # return requested
     if return_labels:

@@ -80,13 +80,13 @@ def ols(
     # find standard errors
     if cluster is not None:
         if absorb is not None:
-            c_mat = a_mat[keep, :]
+            s_mat = a_mat[keep, :]
         else:
-            c_trm = parse_tuple(cluster, convert=Categ)
-            c_mat = c_trm.raw(data[valid], extern=extern)
+            s_trm = parse_tuple(cluster, convert=Categ)
+            s_mat = s_trm.raw(data[valid], extern=extern)
 
         # compute sigma
-        xe2 = error_sums(x_mat, c_mat, e_hat)
+        xe2 = error_sums(x_mat, s_mat, e_hat)
         sigma = ixpx @ xe2 @ ixpx
     else:
         s2 = (e_hat @ e_hat)/(N-K)
@@ -121,10 +121,9 @@ def block_outer_inverse(X, D):
     return block_inverse(A, B, C, d)
 
 # from cameron and miller
-# null C values will lead to -1 group
 def error_sums(X, C, e):
-    xe = multiply(X, e[:, None])
-    codes, _ = category_indices(C)
+    codes, valid = category_indices(C, dropna=True)
+    xe = multiply(X[valid, :], e[valid, None])
     xeg = group_sums(xe, codes)
     xe2 = xeg.T @ xeg
     return xe2
@@ -152,25 +151,26 @@ def absorb_categorical(y, x, abs):
     # do this iteratively to reduce data loss
     for j in range(A):
         # create class groups
-        codes, _ = category_indices(abs[:, j])
+        codes, valid = category_indices(abs[:, j], dropna=True)
 
         # perform differencing on y
-        avg_y = group_means(y, codes)
-        y -= avg_y[codes]
+        avg_y = group_means(y[valid], codes)
+        y[valid] -= avg_y[codes]
 
         # perform differencing on x
-        avg_x = group_means(x, codes)
-        x -= avg_x[codes, :]
+        avg_x = group_means(x[valid, :], codes)
+        x[valid, :] -= avg_x[codes, :]
 
-        # detect singletons
+        # detect singletons or invalid
         multi = np.bincount(codes) > 1
-        keep &= multi[codes]
+        keep[valid] &= multi[codes]
+        keep[~valid] = False
 
     # recenter means
     y += avg_y0
     x += avg_x0[None, :]
 
-    # drop singletons
+    # drop invalid
     y = y[keep]
     x = x[keep, :]
 

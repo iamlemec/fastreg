@@ -54,6 +54,19 @@ def hstack(v, format='csr'):
     else:
         return np.hstack(v)
 
+def get_dtype(*v):
+    tarr = [x.dtype for x in v if hasattr(x, 'dtype')]
+    tsca = [type(x) for x in v if not hasattr(x, 'dtype')]
+    return np.lib.index_tricks.find_common_type(tarr, tsca)
+
+# splice two 1d arrays based on boolean condition
+def splice(cond, x1, x2):
+    dtype = get_dtype(x1, x2)
+    x = np.empty_like(cond, dtype=dtype)
+    x[cond] = x1
+    x[~cond] = x2
+    return x
+
 # concat lists
 def chainer(v):
     return list(chain.from_iterable(v))
