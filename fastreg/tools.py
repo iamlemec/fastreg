@@ -115,7 +115,7 @@ def group_sums(x, codes):
                 codes[x.indices[i:j]], weights=x.data[i:j], minlength=C
             ) for i, j in idx
         ]).T
-    elif x.ndim == 1:
+    elif np.ndim(x) == 1:
         return np.bincount(codes, weights=x)
     else:
         _, K = x.shape
@@ -125,7 +125,7 @@ def group_sums(x, codes):
 
 # sparsity handled by group_sums
 def group_means(x, codes):
-    if x.ndim == 1:
+    if np.ndim(x) == 1:
         return group_sums(x, codes)/np.bincount(codes)
     else:
         return group_sums(x, codes)/np.bincount(codes)[:, None]
@@ -148,7 +148,7 @@ def valid_rows(x):
     fmt = x.format if sp.issparse(x) else None
     if fmt is None:
         null = ~pd.isnull(x)
-        return null if x.ndim == 1 else null.any(axis=1)
+        return null if x.ndim == 1 else null.all(axis=1)
     elif fmt == 'csr':
         N, _ = x.shape
         nidx, = np.nonzero(np.isnan(x.data))

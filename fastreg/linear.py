@@ -3,11 +3,12 @@
 ##
 
 import numpy as np
+import pandas as pd
 import scipy.sparse as sp
 
 from .tools import (
     hstack, multiply, ensure_dense, group_sums, group_means, chainer,
-    block_inverse
+    block_inverse, valid_rows
 )
 from .formula import (
     category_indices, design_matrices, parse_tuple, ensure_formula, Categ
@@ -21,6 +22,9 @@ def ols(
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
 
+    # track valid rows
+    valid = np.ones(len(data), dtype=bool)
+
     # use hdfe trick
     if hdfe is not None:
         h_trm = parse_tuple(hdfe, convert=Categ)
@@ -28,13 +32,37 @@ def ols(
 
     # don't include absorb
     if absorb is not None:
+        if cluster is None:
+            cluster = absorb
         a_trm = parse_tuple(absorb, convert=Categ)
+        a_mat = a_trm.raw(data, extern=extern)
+        valid &= valid_rows(a_mat)
         x -= a_trm
+
+    # cluster=False is only to override auto on absorb
+    if cluster is False:
+        cluster = None
+
+    # fetch cluster var
+    if cluster is not None:
+        if cluster == absorb:
+            s_mat = a_mat
+        else:
+            s_trm = parse_tuple(cluster, convert=Categ)
+            s_mat = s_trm.raw(data, extern=extern)
+            valid &= valid_rows(s_mat)
 
     # make design matrices
     y_vec, y_name, x0_mat, x0_names, c_mat, c_names0, valid = design_matrices(
-        y=y, x=x, formula=formula, data=data, drop=drop, extern=extern
+        y=y, x=x, formula=formula, data=data, valid0=valid, drop=drop,
+        extern=extern
     )
+
+    # drop final invalid from cluster and absorb
+    if absorb is not None:
+        a_mat = a_mat[valid]
+    if cluster is not None:
+        s_mat = s_mat[valid]
 
     # combine x variables
     x_mat = hstack([x0_mat, c_mat])
@@ -47,10 +75,10 @@ def ols(
 
     # use absorption
     if absorb is not None:
-        cluster = absorb
         x_mat = ensure_dense(x_mat)
-        a_mat = a_trm.raw(data[valid], extern=extern)
         y_vec, x_mat, keep = absorb_categorical(y_vec, x_mat, a_mat)
+        if cluster is not None:
+            s_mat = s_mat[keep, :]
 
     # linalg tool select
     if sp.issparse(x_mat):
@@ -83,16 +111,10 @@ def ols(
 
     # find standard errors
     if cluster is not None:
-        if absorb is not None:
-            s_mat = a_mat[keep, :]
-        else:
-            s_trm = parse_tuple(cluster, convert=Categ)
-            s_mat = s_trm.raw(data[valid], extern=extern)
-
-        # compute sigma
         xe2 = error_sums(x_mat, s_mat, e_hat)
         sigma = ixpx @ xe2 @ ixpx
     else:
+        K = len(x_names)
         s2 = (e_hat @ e_hat)/(N-K)
         if hdfe is not None:
             sigma = s2*ixr, s2*ixc
@@ -155,20 +177,19 @@ def absorb_categorical(y, x, abs):
     # do this iteratively to reduce data loss
     for j in range(A):
         # create class groups
-        codes, valid = category_indices(abs[:, j], dropna=True)
+        codes, _ = category_indices(abs[:, j])
 
         # perform differencing on y
-        avg_y = group_means(y[valid], codes)
-        y[valid] -= avg_y[codes]
+        avg_y = group_means(y, codes)
+        y -= avg_y[codes]
 
         # perform differencing on x
-        avg_x = group_means(x[valid, :], codes)
-        x[valid, :] -= avg_x[codes, :]
+        avg_x = group_means(x, codes)
+        x -= avg_x[codes, :]
 
-        # detect singletons or invalid
+        # detect singletons
         multi = np.bincount(codes) > 1
-        keep[valid] &= multi[codes]
-        keep[~valid] = False
+        keep &= multi[codes]
 
     # recenter means
     y += avg_y0

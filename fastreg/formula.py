@@ -77,7 +77,7 @@ def category_indices(vals, dropna=False, return_labels=False):
     uni_indx, uni_vals = factorize_2d(vals1)
 
     # patch in valid data
-    if dropna:
+    if dropna or valid.all():
         uni_ind1 = uni_indx
     else:
         uni_ind1 = splice(valid, uni_indx, -1)
@@ -189,7 +189,10 @@ class Factor(MetaFactor, metaclass=AccessorType):
         return hash(str(self))
 
     def __eq__(self, other):
-        return str(self) == str(other)
+        if isinstance(other, MetaFactor):
+            return str(self) == str(other)
+        else:
+            return False
 
     def __repr__(self):
         return self._name
@@ -229,7 +232,10 @@ class Term(MetaTerm):
         return hash(tuple(set(self)))
 
     def __eq__(self, other):
-        return set(self) == set(other)
+        if isinstance(other, MetaTerm):
+            return set(self) == set(other)
+        else:
+            return False
 
     def __repr__(self):
         if len(self) == 0:
@@ -545,7 +551,7 @@ def ensure_formula(y=None, x=None, formula=None):
 
 def design_matrices(
     y=None, x=None, formula=None, data=None, method='sparse', drop='first',
-    dropna=True, prune=True, warn=True, extern=None
+    dropna=True, prune=True, warn=True, extern=None, valid0=None
 ):
     # parse into pythonic formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -558,7 +564,7 @@ def design_matrices(
 
     # aggregate valid info for data
     y_val = valid_rows(y_vec)
-    valid = all_valid(y_val, x_val, c_val)
+    valid = all_valid(valid0, y_val, x_val, c_val)
 
     # drop null values if requested
     if dropna:
