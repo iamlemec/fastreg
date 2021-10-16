@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder
 
 from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
 from .tools import (
@@ -65,24 +65,16 @@ def swizzle(ks, vs):
 
 # ordinally encode interaction terms (tuple-like things)
 # null data is returned with a -1 index if not dropna
-from pandas.core.sorting import get_group_index
 def category_indices(vals, dropna=False, return_labels=False):
     # also accept single vectors
     vals = atleast_2d(vals)
-    N, _ = vals.shape
 
     # track valid rows
     valid = valid_rows(vals)
     vals1 = vals[valid]
 
-    # convert to packed integers
-    ord_enc = OrdinalEncoder(dtype=int)
-    ord_vals = ord_enc.fit_transform(vals1)
-    ord_cats = ord_enc.categories_
-    ord_size = [len(c) for c in ord_cats]
-
     # find unique rows
-    uni_indx, uni_vals = factorize_2d(ord_vals)
+    uni_indx, uni_vals = factorize_2d(vals1)
 
     # patch in valid data
     if dropna:
@@ -92,10 +84,7 @@ def category_indices(vals, dropna=False, return_labels=False):
 
     # return requested
     if return_labels:
-        uni_labs = list(zip(*[
-            oc[uv] for oc, uv in zip(ord_cats, uni_vals.T)
-        ]))
-        return uni_ind1, uni_labs, valid
+        return uni_ind1, uni_vals, valid
     else:
         return uni_ind1, valid
 
