@@ -26,6 +26,11 @@ def ols(
         h_trm = parse_tuple(hdfe, convert=Categ)
         x = (x - h_trm) + h_trm # pop to end
 
+    # don't include absorb
+    if absorb is not None:
+        a_trm = parse_tuple(absorb, convert=Categ)
+        x -= a_trm
+
     # make design matrices
     y_vec, y_name, x0_mat, x0_names, c_mat, c_names0, valid = design_matrices(
         y=y, x=x, formula=formula, data=data, drop=drop, extern=extern
@@ -44,7 +49,6 @@ def ols(
     if absorb is not None:
         cluster = absorb
         x_mat = ensure_dense(x_mat)
-        a_trm = parse_tuple(absorb, convert=Categ)
         a_mat = a_trm.raw(data[valid], extern=extern)
         y_vec, x_mat, keep = absorb_categorical(y_vec, x_mat, a_mat)
 

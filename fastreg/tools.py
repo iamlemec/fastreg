@@ -8,6 +8,8 @@ import numpy.linalg as la
 import scipy.sparse as sp
 from itertools import chain, accumulate
 from functools import partial
+from pandas._libs.hashtable import SIZE_HINT_LIMIT
+from pandas.core.sorting import get_group_index
 
 # general pointwise multiply
 def multiply(a, b):
@@ -70,6 +72,26 @@ def splice(cond, x1, x2):
 # concat lists
 def chainer(v):
     return list(chain.from_iterable(v))
+
+# factorize like pd.factorize but with 2d arrays
+def factorize_2d(a):
+    # column compressor
+    size_hint = min(a.shape[0], SIZE_HINT_LIMIT)
+    def f(vals):
+        codes, labels = pd.factorize(vals, sort=True, size_hint=size_hint)
+        return codes.astype("i8", copy=False), labels, len(labels)
+
+    # get grouped ids
+    vals = (col for col in a.T)
+    codes, labels, shape = map(list, zip(*map(f, vals)))
+    gids = get_group_index(codes, shape, sort=False, xnull=False)
+
+    # get unique ids
+    gcode, glabs = pd.factorize(gids, sort=True)
+    coords = np.unravel_index(glabs, shape)
+    ulabs = np.vstack([lab[crd] for crd, lab in zip(coords, labels)]).T
+
+    return gcode, ulabs
 
 # split list on boolean condition
 def categorize(func, seq):

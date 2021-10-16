@@ -12,8 +12,8 @@ from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 
 from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
 from .tools import (
-    categorize, hstack, chainer, decorator, func_name, func_disp,
-    valid_rows, split_size, atleast_2d, fillna, all_valid, splice
+    categorize, hstack, chainer, decorator, func_name, func_disp, valid_rows,
+    split_size, atleast_2d, fillna, all_valid, splice, factorize_2d
 )
 
 ##
@@ -65,6 +65,7 @@ def swizzle(ks, vs):
 
 # ordinally encode interaction terms (tuple-like things)
 # null data is returned with a -1 index if not dropna
+from pandas.core.sorting import get_group_index
 def category_indices(vals, dropna=False, return_labels=False):
     # also accept single vectors
     vals = atleast_2d(vals)
@@ -75,12 +76,13 @@ def category_indices(vals, dropna=False, return_labels=False):
     vals1 = vals[valid]
 
     # convert to packed integers
-    ord_enc = OrdinalEncoder(categories='auto', dtype=int)
+    ord_enc = OrdinalEncoder(dtype=int)
     ord_vals = ord_enc.fit_transform(vals1)
     ord_cats = ord_enc.categories_
+    ord_size = [len(c) for c in ord_cats]
 
     # find unique rows
-    uni_vals, uni_indx = np.unique(ord_vals, axis=0, return_inverse=True)
+    uni_indx, uni_vals = factorize_2d(ord_vals)
 
     # patch in valid data
     if dropna:
