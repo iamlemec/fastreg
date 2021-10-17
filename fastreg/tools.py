@@ -170,6 +170,21 @@ def split_size(x, s):
     b = cumsum(s)
     return np.split(x, b)
 
+# expects compact positive integers, except for -1 being null
+# drops -1 always and 0 if drop (maps into all zeros)
+def onehot_encode(indx, drop=True):
+    base = 1 if drop else 0
+    sel = indx >= base
+    rows = np.flatnonzero(sel)
+    cols = indx[sel] - base
+    data = np.ones_like(rows)
+    N, K = len(indx), indx.max()
+    smat = sp.csr_matrix(
+        (data, (rows, cols)), shape=(N, K)
+    )
+    cats = np.arange(base, K+1)
+    return smat, cats
+
 ##
 ## function tools
 ##

@@ -8,12 +8,10 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from sklearn.preprocessing import OneHotEncoder
-
 from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
 from .tools import (
-    categorize, hstack, chainer, decorator, func_name, func_disp, valid_rows,
-    split_size, atleast_2d, fillna, all_valid, splice, factorize_2d
+    categorize, hstack, chainer, decorator, func_disp, valid_rows, split_size,
+    atleast_2d, fillna, all_valid, splice, factorize_2d, onehot_encode
 )
 
 ##
@@ -89,32 +87,16 @@ def category_indices(vals, dropna=False, return_labels=False):
         return uni_ind1, valid
 
 # encode categories as one-hot matrix
-def encode_categorical(vals, names, method='sparse', drop='first'):
+def encode_categorical(vals, names, method='sparse', drop=True):
     # reindex categoricals jointly
     cats_val, cats_lab, valid = category_indices(vals, return_labels=True)
-    cats_val = cats_val.reshape(-1, 1)
     cats_lab = [swizzle(names, l) for l in cats_lab]
 
     # if ordinal no labels are dropped
     if method == 'ordinal':
-        cats_enc, cats_use = cats_val, cats_lab
+        cats_enc, cats_use = cats_val.reshape(-1, 1), cats_lab
     elif method == 'sparse':
-        # one-hot encode ignoring -1 with drop
-        cat_min = 1 if drop == 'first' else 0
-        cat_max = cats_val.max() + 1
-        icats = np.arange(cat_min, cat_max)
-
-        # make matrix and categories
-        enc = OneHotEncoder(
-            categories=[icats], dtype=int, handle_unknown='ignore'
-        )
-        cats_enc = enc.fit_transform(cats_val)
-        cats_all, = enc.categories_
-
-        # get list of used categories
-        if enc.drop_idx_ is not None:
-            drop_idx = enc.drop_idx_.astype(int)
-            cats_all = np.delete(cats_all, drop_idx)
+        cats_enc, cats_all = onehot_encode(cats_val, drop=drop)
         cats_use = [cats_lab[i] for i in cats_all]
 
     return cats_enc, cats_use, valid
@@ -269,7 +251,7 @@ class Term(MetaTerm):
     def raw(self, data, extern=None):
         return np.vstack([f.eval(data, extern=extern) for f in self]).T
 
-    def eval(self, data, method='sparse', drop='first', extern=None):
+    def eval(self, data, method='sparse', drop=True, extern=None):
         # zero length is identity
         if len(self) == 0:
             N = len(data)
@@ -345,7 +327,7 @@ class Formula(MetaFormula):
                 [Term(*t1, *t2) for t1 in self] for t2 in other
             ]))
 
-    def eval(self, data, method='sparse', drop='first', extern=None):
+    def eval(self, data, method='sparse', drop=True, extern=None):
         # split by all real or not
         categ, reals = categorize(is_categorical, self)
 
@@ -550,7 +532,7 @@ def ensure_formula(y=None, x=None, formula=None):
     return y, x
 
 def design_matrices(
-    y=None, x=None, formula=None, data=None, method='sparse', drop='first',
+    y=None, x=None, formula=None, data=None, method='sparse', drop=True,
     dropna=True, prune=True, warn=True, extern=None, valid0=None
 ):
     # parse into pythonic formula system

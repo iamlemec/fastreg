@@ -1,9 +1,10 @@
 from setuptools import setup
+from pathlib import Path
 
 # read the contents of your README file
-from pathlib import Path
-this_directory = Path(__file__).parent
-long_description = (this_directory / "README.md").read_text()
+here = Path(__file__).parent
+long_description = (here / 'README.md').read_text().strip()
+requirements = (here / 'requirements.txt').read_text().strip().split('\n')
 
 setup(
     name='fastreg',
@@ -14,8 +15,8 @@ setup(
     author_email='thesecretaryofwar@gmail.com',
     license='MIT',
     packages=['fastreg'],
-    install_requires=['numpy', 'scipy', 'pandas', 'sklearn'],
     zip_safe=False,
+    install_requires=requirements,
     long_description=long_description,
     long_description_content_type='text/markdown',
 )
