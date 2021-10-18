@@ -327,6 +327,9 @@ class Formula(MetaFormula):
                 [Term(*t1, *t2) for t1 in self] for t2 in other
             ]))
 
+    def raw(self, data, extern=None):
+        return [t.eval(data, extern=extern) for t in self]
+
     def eval(self, data, method='sparse', drop=True, extern=None):
         # split by all real or not
         categ, reals = categorize(is_categorical, self)

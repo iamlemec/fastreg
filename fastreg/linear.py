@@ -2,6 +2,7 @@
 ## linear regressions
 ##
 
+import re
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -17,7 +18,7 @@ from .summary import param_table
 
 def ols(
     y=None, x=None, formula=None, data=None, absorb=None, cluster=None,
-    hdfe=None, drop='first', extern=None, output='table'
+    hdfe=None, stderr=True, drop='first', extern=None, output='table'
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -93,13 +94,26 @@ def ols(
     xpy = x_mat.T @ y_vec
     beta = solve(xpx, xpy)
 
-    # just the betas
-    if output == 'beta':
+    # just the point estimates
+    if output == 'point':
         return beta
 
     # find residuals
     y_hat = x_mat @ beta
     e_hat = y_vec - y_hat
+
+    # just the point estimate
+    if stderr is False:
+        if output == 'table':
+            return param_table(beta, y_name, x_names)
+        elif output == 'dict':
+            return {
+                'beta': beta,
+                'y_name': y_name,
+                'x_names': x_names,
+                'y_hat': y_hat,
+                'e_hat': e_hat,
+            }
 
     # find inv(xpx) somehow
     if hdfe is not None:
@@ -107,23 +121,31 @@ def ols(
         xh_mat, ch_mat = ensure_dense(x_mat[:, :-Kh]), x_mat[:, -Kh:]
         ixr, ixc = block_outer_inverse(xh_mat, ch_mat)
     else:
-        ixpx = inv(xpx)
+        ixpx = ensure_dense(inv(xpx))
+
+    # compute classical sigma hat
+    if stderr is True or hdfe is not None:
+        s2 = (e_hat @ e_hat)/(N-K)
+
+    # compute Xe moment
+    if cluster is not None or type(stderr):
+        xe_mat = multiply(x_mat, e_hat[:, None])
 
     # find standard errors
     if cluster is not None:
-        xe2 = error_sums(x_mat, s_mat, e_hat)
+        xe2 = error_sums(xe_mat, s_mat)
         sigma = ixpx @ xe2 @ ixpx
-    else:
-        K = len(x_names)
-        s2 = (e_hat @ e_hat)/(N-K)
-        if hdfe is not None:
-            sigma = s2*ixr, s2*ixc
-        else:
-            sigma = s2*ixpx
+    elif hdfe is not None:
+        sigma = s2*ixr, s2*ixc
+    elif stderr is True:
+        sigma = s2*ixpx
+    elif type(stderr) is str:
+        hc, = map(int, re.match(r'hc([0-3])', stderr).groups())
+        sigma = hc_stderr(hc, N, K, ixpx, x_mat, xe_mat)
 
     # return requested
     if output == 'table':
-        return param_table(beta, sigma, y_name, x_names)
+        return param_table(beta, y_name, x_names, sigma=sigma)
     elif output == 'dict':
         return {
             'beta': beta,
@@ -147,12 +169,26 @@ def block_outer_inverse(X, D):
     return block_inverse(A, B, C, d)
 
 # from cameron and miller
-def error_sums(X, C, e):
-    codes, valid = category_indices(C, dropna=True)
-    xe = multiply(X[valid, :], e[valid, None])
+def error_sums(xe, c):
+    codes, _ = category_indices(c, dropna=True)
     xeg = group_sums(xe, codes)
     xe2 = xeg.T @ xeg
     return xe2
+
+def hc_stderr(hc, N, K, ixpx, x, xe):
+    if hc < 2:
+        xeh = xe
+    else:
+        xq = x @ np.linalg.cholesky(ixpx)
+        hii = np.sum(xq**2, axis=1)
+        hinv = 1/(1-hii)
+        if hc == 2:
+            hinv = np.sqrt(hinv)
+        xeh = multiply(xe, hinv[:, None])
+    sigma = ixpx @ (xeh.T @ xeh) @ ixpx
+    if hc == 1:
+        sigma *= N/(N-K)
+    return sigma
 
 ##
 ## absorption
@@ -177,7 +213,7 @@ def absorb_categorical(y, x, abs):
     # do this iteratively to reduce data loss
     for j in range(A):
         # create class groups
-        codes, _ = category_indices(abs[:, j])
+        codes, _ = category_indices(abs[:, j], dropna=True)
 
         # perform differencing on y
         avg_y = group_means(y, codes)

@@ -430,7 +430,7 @@ def glm(
 
     if output == 'table':
         beta_vec, sigma_vec = flatten_output(beta, sigma)
-        return param_table(beta_vec, sigma_vec, y_name, names)
+        return param_table(beta_vec, y_name, names, sigma=sigma_vec)
     elif output == 'dict':
         return {
             'beta': beta,
