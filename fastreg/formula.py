@@ -185,6 +185,9 @@ class Factor(MetaFactor, metaclass=AccessorType):
         elif isinstance(other, MetaFormula):
             return Formula(self, *other)
 
+    def __sub__(self, other):
+        return Formula(self) - other
+
     def __mul__(self, other):
         if isinstance(other, MetaFactor):
             return Term(self, other)
@@ -236,6 +239,9 @@ class Term(MetaTerm):
             return Formula(self, other)
         elif isinstance(other, MetaFormula):
             return Formula(self, *other)
+
+    def __sub__(self, other):
+        return Formula(self) - other
 
     def __mul__(self, other):
         if isinstance(other, MetaFactor):
@@ -316,6 +322,10 @@ class Formula(MetaFormula):
             return Formula(*[
                 t for t in self if t != other
             ])
+        if isinstance(other, MetaFormula):
+            return Formula(*[
+                t for t in self if t not in other
+            ])
 
     def __mul__(self, other):
         if isinstance(other, MetaFactor):
@@ -328,7 +338,7 @@ class Formula(MetaFormula):
             ]))
 
     def raw(self, data, extern=None):
-        return [t.eval(data, extern=extern) for t in self]
+        return [t.raw(data, extern=extern) for t in self]
 
     def eval(self, data, method='sparse', drop=True, extern=None):
         # split by all real or not

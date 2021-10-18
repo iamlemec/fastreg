@@ -6,13 +6,16 @@ import re
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
+from functools import reduce
+from operator import mul, and_
 
 from .tools import (
     hstack, multiply, ensure_dense, group_sums, group_means, chainer,
     block_inverse, valid_rows
 )
 from .formula import (
-    category_indices, design_matrices, parse_tuple, ensure_formula, Categ
+    category_indices, design_matrices, parse_tuple, parse_list, ensure_formula,
+    Categ
 )
 from .summary import param_table
 
@@ -33,12 +36,12 @@ def ols(
 
     # don't include absorb
     if absorb is not None:
-        if cluster is None:
-            cluster = absorb
-        a_trm = parse_tuple(absorb, convert=Categ)
+        a_trm = parse_list(absorb, convert=Categ)
         a_mat = a_trm.raw(data, extern=extern)
-        valid &= valid_rows(a_mat)
+        valid &= reduce(and_, (valid_rows(a) for a in a_mat))
         x -= a_trm
+        if cluster is None:
+            cluster = reduce(mul, a_trm)
 
     # cluster=False is only to override auto on absorb
     if cluster is False:
@@ -46,12 +49,9 @@ def ols(
 
     # fetch cluster var
     if cluster is not None:
-        if cluster == absorb:
-            s_mat = a_mat
-        else:
-            s_trm = parse_tuple(cluster, convert=Categ)
-            s_mat = s_trm.raw(data, extern=extern)
-            valid &= valid_rows(s_mat)
+        s_trm = parse_tuple(cluster, convert=Categ)
+        s_mat = s_trm.raw(data, extern=extern)
+        valid &= valid_rows(s_mat)
 
     # make design matrices
     y_vec, y_name, x0_mat, x0_names, c_mat, c_names0, valid = design_matrices(
@@ -61,7 +61,7 @@ def ols(
 
     # drop final invalid from cluster and absorb
     if absorb is not None:
-        a_mat = a_mat[valid]
+        a_mat = [a[valid] for a in a_mat]
     if cluster is not None:
         s_mat = s_mat[valid]
 
@@ -197,7 +197,6 @@ def hc_stderr(hc, N, K, ixpx, x, xe):
 # will absorb null (-1) values together
 def absorb_categorical(y, x, abs):
     N, K = x.shape
-    _, A = abs.shape
 
     # copy so as not to destroy
     y = y.copy()
@@ -211,9 +210,9 @@ def absorb_categorical(y, x, abs):
     keep = np.ones(N, dtype=np.bool)
 
     # do this iteratively to reduce data loss
-    for j in range(A):
+    for a in abs:
         # create class groups
-        codes, _ = category_indices(abs[:, j], dropna=True)
+        codes, _ = category_indices(a, dropna=True)
 
         # perform differencing on y
         avg_y = group_means(y, codes)
