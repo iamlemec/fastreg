@@ -128,7 +128,7 @@ def ols(
         s2 = (e_hat @ e_hat)/(N-K)
 
     # compute Xe moment
-    if cluster is not None or type(stderr):
+    if cluster is not None or type(stderr) is str:
         xe_mat = multiply(x_mat, e_hat[:, None])
 
     # find standard errors
@@ -141,7 +141,7 @@ def ols(
         sigma = s2*ixpx
     elif type(stderr) is str:
         hc, = map(int, re.match(r'hc([0-3])', stderr).groups())
-        sigma = hc_stderr(hc, N, K, ixpx, x_mat, xe_mat)
+        sigma = hcn_stderr(hc, x_mat, xe_mat, ixpx)
 
     # return requested
     if output == 'table':
@@ -175,7 +175,9 @@ def error_sums(xe, c):
     xe2 = xeg.T @ xeg
     return xe2
 
-def hc_stderr(hc, N, K, ixpx, x, xe):
+# handles hc in (0, 1, 2, 3)
+def hcn_stderr(hc, x, xe, ixpx):
+    N, K = x.shape
     if hc < 2:
         xeh = xe
     else:
