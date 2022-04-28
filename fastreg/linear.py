@@ -55,8 +55,8 @@ def ols(
 
     # make design matrices
     y_vec, y_name, x0_mat, x0_names, c_mat, c_names0, valid = design_matrices(
-        y=y, x=x, formula=formula, data=data, valid0=valid, drop=drop,
-        extern=extern
+        y=y, x=x, formula=formula, data=data, valid0=valid, drop=drop, extern=extern,
+        flatten=False, validate=True
     )
 
     # drop final invalid from cluster and absorb
@@ -209,7 +209,7 @@ def absorb_categorical(y, x, abs):
     avg_x0 = np.mean(x, axis=0)
 
     # track whether to drop
-    keep = np.ones(N, dtype=np.bool)
+    keep = np.ones(N, dtype=bool)
 
     # do this iteratively to reduce data loss
     for a in abs:

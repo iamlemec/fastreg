@@ -375,8 +375,8 @@ def glm(
         hdfe = c_hdfe.name()
 
     # construct design matrices
-    y_vec, y_name, x_mat, x_names, c_mat, c_names0, valid = design_matrices(
-        y=y, x=x, data=data, method='ordinal', extern=extern
+    y_vec, y_name, x_mat, x_names, c_mat, c_names0 = design_matrices(
+        y=y, x=x, data=data, method='ordinal', extern=extern, flatten=False
     )
 
     # accumulate all names

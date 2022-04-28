@@ -214,11 +214,13 @@ class Term(MetaTerm):
         self._facts = facts
 
     def __hash__(self):
-        return hash(tuple(set(self)))
+        return hash(str(self))
 
     def __eq__(self, other):
         if isinstance(other, MetaTerm):
             return set(self) == set(other)
+        elif isinstance(other, MetaFactor):
+            return set(self) == {other}
         else:
             return False
 
@@ -546,7 +548,8 @@ def ensure_formula(y=None, x=None, formula=None):
 
 def design_matrices(
     y=None, x=None, formula=None, data=None, method='sparse', drop=True,
-    dropna=True, prune=True, warn=True, extern=None, valid0=None
+    dropna=True, prune=True, warn=True, extern=None, valid0=None, flatten=True,
+    validate=False
 ):
     # parse into pythonic formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -573,5 +576,16 @@ def design_matrices(
             c_mat, c_labels, method=method, warn=warn
         )
 
-    # return full info
-    return y_vec, y_name, x_mat, x_names, c_mat, c_labels, valid
+    # combine real and categorical?
+    if flatten:
+        f_mat = hstack([x_mat, c_mat])
+        f_names = x_names + chainer(c_labels.values())
+        ret = y_vec, y_name, f_mat, f_names
+    else:
+        ret = y_vec, y_name, x_mat, x_names, c_mat, c_labels
+
+    # return valid mask?
+    if validate:
+        return *ret, valid
+    else:
+        return ret
