@@ -501,13 +501,15 @@ def parse_formula(form):
     desc = ModelDesc.from_formula(form)
     lhs, rhs = desc.lhs_termlist, desc.rhs_termlist
 
+    # check for invalid y
+    if len(lhs) > 1:
+        raise Exception('Must have single factor y term')
+
     # convert to string lists
+    y_terms = parse_factor(lhs[0].factors[0]) if len(lhs) > 0 else None
     x_terms = Formula(*[parse_term(t) for t in rhs])
-    if len(lhs) > 0:
-        y_terms = parse_factor(lhs[0].factors[0])
-        return y_terms, x_terms
-    else:
-        return x_terms
+
+    return y_terms, x_terms
 
 def parse_item(i, convert=Real):
     if isinstance(i, MetaFactor):
@@ -543,31 +545,31 @@ def ensure_formula(y=None, x=None, formula=None):
     if formula is not None:
         y, x = parse_formula(formula)
     else:
-        y, x = parse_item(y), parse_list(x)
+        y = parse_item(y) if y is not None else None
+        x = parse_list(x)
     return y, x
 
-def design_matrices(
+def design_matrix(
     y=None, x=None, formula=None, data=None, method='sparse', drop=True,
     dropna=True, prune=True, warn=True, extern=None, valid0=None, flatten=True,
     validate=False
 ):
-    # parse into pythonic formula system
-    y, x = ensure_formula(x=x, y=y, formula=formula)
+    y, x = ensure_formula(x=x, formula=formula)
+    if y is not None:
+        raise Exception('Use design_matrices for formulas with an LHS.')
 
-    # evaluate x and y variables
-    y_vec, y_name = y.eval(data, extern=extern), y.name()
+    # evaluate x variables
     x_mat, x_val, x_names, c_mat, c_val, c_labels = x.eval(
         data, method=method, drop=drop, extern=extern
     )
 
     # aggregate valid info for data
-    y_val = valid_rows(y_vec)
-    valid = all_valid(valid0, y_val, x_val, c_val)
+    valid = all_valid(valid0, x_val, c_val)
 
     # drop null values if requested
     if dropna:
-        y_vec, x_mat, c_mat = drop_invalid(
-            valid, y_vec, x_mat, c_mat, warn=warn
+        x_mat, c_mat = drop_invalid(
+            valid, x_mat, c_mat, warn=warn
         )
 
     # prune empty categories if requested
@@ -580,11 +582,42 @@ def design_matrices(
     if flatten:
         f_mat = hstack([x_mat, c_mat])
         f_names = x_names + chainer(c_labels.values())
-        ret = y_vec, y_name, f_mat, f_names
+        ret = f_mat, f_names
     else:
-        ret = y_vec, y_name, x_mat, x_names, c_mat, c_labels
+        ret = x_mat, x_names, c_mat, c_labels
 
     # return valid mask?
+    if validate:
+        return *ret, valid
+    else:
+        return ret
+
+def design_matrices(
+    y=None, x=None, formula=None, data=None, dropna=True, extern=None,
+    valid0=None, validate=False, **kwargs
+):
+    # parse into pythonic formula system
+    y, x = ensure_formula(x=x, y=y, formula=formula)
+    if y is None:
+        raise Exception('Use design_matrix for formulas without an LHS')
+
+    # get y data
+    y_vec, y_name = y.eval(data, extern=extern), y.name()
+    y_val = valid_rows(y_vec)
+
+    # get valid x data
+    x_val0 = all_valid(valid0, y_val)
+    *x_ret, valid = design_matrix(
+        x=x, data=data, dropna=dropna, extern=extern, valid0=x_val0,
+        validate=True, **kwargs
+    )
+
+    # drop invalid y
+    if dropna:
+        y_vec, = drop_invalid(valid, y_vec)
+
+    # return combined data
+    ret = y_vec, y_name, *x_ret
     if validate:
         return *ret, valid
     else:
