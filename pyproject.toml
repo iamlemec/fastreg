@@ -1,0 +1,30 @@
+# pyproject.toml
+
+[build-system]
+requires = ['setuptools>=61.0.0', 'wheel']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'fastreg'
+version = '1.0'
+description = 'Fast sparse regressions'
+readme = { file = 'README.md' , content-type = 'text/markdown' }
+authors = [{ name = 'Doug Hanley', email = 'thesecretaryofwar@gmail.com' }]
+license = { file = 'LICENSE' }
+classifiers = [
+    'License :: OSI Approved :: MIT License',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+]
+keywords = ['statistics', 'regression', 'ols', 'glm']
+dependencies = ['numpy', 'scipy', 'pandas']
+requires-python = '>=3.7'
+
+[project.optional-dependencies]
+glm = ['jax', 'jaxlib']
+
+[project.urls]
+Homepage = 'http://github.com/iamlemec/fastreg'
+
+[tool.setuptools.packages.find]
+include = ['fastreg']
