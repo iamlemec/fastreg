@@ -8,7 +8,7 @@ requirements = (here / 'requirements.txt').read_text().strip().split('\n')
 
 setup(
     name='fastreg',
-    version='0.9',
+    version='1.0',
     description='Fast sparse regressions',
     url='http://github.com/iamlemec/fastreg',
     author='Doug Hanley',
