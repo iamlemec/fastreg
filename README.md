@@ -189,7 +189,10 @@ fr.ols(y='y0', x=I+R('@logit(x1)')+R.x2, data=data, extern=extern)
 The core functionality of this library lies in creating well-structured data matrices (often called "design matrices") from actual data in the for of Pandas DataFrames and a regression specification, either Fastreg-style or R-style. For that, we have the following function defined in `formula.py`. You must always pass `data` as well as either `y`/`x` or `formula`.
 
 ```python
-fastreg.design_matrices(y=None, x=None, formula=None, data=None, dropna=True, prune=True, validate=False, flatten=True, extern=None, warn=True)
+fastreg.design_matrices(
+    y=None, x=None, formula=None, data=None, dropna=True, prune=True, validate=False,
+    flatten=True, extern=None, warn=True
+)
 ```
 - **y**: specification for the outcome variable, a column name (`str`) or a single `Term`, which might be the combination of multiple `Factor`s
 - **x**: specification for the input variables, a `Formula` or `list` of `Term`s
@@ -205,7 +208,10 @@ fastreg.design_matrices(y=None, x=None, formula=None, data=None, dropna=True, pr
 This returns (data, name) pairs for both `y` and `x` variables. In addition, if you only want to deal with the `x` variables, you can use `design_matrix`, which has nearly identical syntax but does not accept the `y` argument. Next is the `ols` function defined in `linear.py` that handles regressions.
 
 ```python
-fastreg.ols(y=None, x=None, formula=None, data=None, cluster=None, absorb=None, hdfe=None, stderr=True, output='table')
+fastreg.ols(
+    y=None, x=None, formula=None, data=None, cluster=None, absorb=None, hdfe=None,
+    stderr=True, output='table'
+)
 ```
 - **y**: specification for the outcome variable, a column name (`str`) or a single `Term`, which might be the combination of multiple `Factor`s
 - **x**: specification for the input variables, a `Formula` or `list` of `Term`s
