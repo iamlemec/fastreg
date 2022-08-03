@@ -556,7 +556,7 @@ def design_matrix(
 ):
     y, x = ensure_formula(x=x, formula=formula)
     if y is not None:
-        raise Exception('Use design_matrices for formulas with an LHS.')
+        raise Exception('Use design_matrices (plural) for formulas with an LHS.')
 
     # evaluate x variables
     x_mat, x_val, x_names, c_mat, c_val, c_labels = x.eval(

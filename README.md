@@ -6,7 +6,7 @@
 
 <br />
 
-Fast sparse regressions with advanced formula syntax. Good for high-dimensional fixed effects.
+Fast sparse regressions with advanced formula syntax. Good for high-dimensional fixed effects. Installation and usage are described below. Detailed documentation can be found [further down](#documentation).
 
 **New**: generalized linear models and maximum likelihood estimation with JAX.
 
@@ -183,3 +183,38 @@ The `factor` decorator also accepts a `categ` flag that you can set to `True` fo
 extern = {'logit': lambda x: 1/(1+np.exp(-x))}
 fr.ols(y='y0', x=I+R('@logit(x1)')+R.x2, data=data, extern=extern)
 ```
+
+### Documentation
+
+The core functionality of this library lies in creating well-structured data matrices (often called "design matrices") from actual data in the for of Pandas DataFrames and a regression specification, either Fastreg-style or R-style. For that, we have the following function defined in `formula.py`. You must always pass `data` as well as either `y`/`x` or `formula`.
+
+```python
+fastreg.design_matrices(y=None, x=None, formula=None, data=None, dropna=True, prune=True, validate=False, flatten=True, extern=None, warn=True)
+```
+- **y**: specification for the outcome variable, a column name (`str`) or a single `Term`, which might be the combination of multiple `Factor`s
+- **x**: specification for the input variables, a `Formula` or `list` of `Term`s
+- **formula**: an R-style specification string, this will override any `y` or `x` given above
+- **data**: a DataFrame with the underlying dataset
+- **dropna**: drop any rows containing null data
+- **prune**: prune categories that have no instances
+- **validate**: return binary mask specifying which rows were dropped
+- **flatten**: combine dense and sparse `x` variables into one matrix
+- **extern**: a dictionary of functions for use in specification
+- **warn**: output info on dropped rows or categories
+
+This returns (data, name) pairs for both `y` and `x` variables. In addition, if you only want to deal with the `x` variables, you can use `design_matrix`, which has nearly identical syntax but does not accept the `y` argument. Next is the `ols` function defined in `linear.py` that handles regressions.
+
+```python
+fastreg.ols(y=None, x=None, formula=None, data=None, cluster=None, absorb=None, hdfe=None, stderr=True, output='table')
+```
+- **y**: specification for the outcome variable, a column name (`str`) or a single `Term`, which might be the combination of multiple `Factor`s
+- **x**: specification for the input variables, a `Formula` or `list` of `Term`s
+- **formula**: an R-style specification string, this will override any `y` or `x` given above
+- **data**: a DataFrame with the underlying dataset
+- **cluster**: cluster standard errors on the given `Term`
+- **absorb**: regress on differences within groups specified by given `Term`
+- **hdfe**: use block inversion to speed up standard error calculation for given `Term`
+- **stderr**: standard error type, `True` for basic, and `hc1`-`hc3` for robust types
+- **output**: control output, `table` gives DataFrame of estimates, `dict` gives much more info
+
+Other estimators use syntax very similar to that of `ols`. This includes `glm` in `general.py`, which also accepts custom `link` and `loss` functions. For instance, the built-in `poisson` uses and exponential link function and a Poisson loss function.

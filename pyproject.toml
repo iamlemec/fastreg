@@ -26,5 +26,5 @@ glm = ['jax', 'jaxlib']
 [project.urls]
 Homepage = 'http://github.com/iamlemec/fastreg'
 
-[tool.setuptools.packages.find]
-include = ['fastreg']
+[tool.setuptools]
+package-dir = { fastreg = 'fastreg' }
