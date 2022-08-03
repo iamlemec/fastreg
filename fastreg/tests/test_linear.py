@@ -91,3 +91,24 @@ def test_hdfe(data):
 
     assert np.isclose(ret0, ret1).all()
     assert np.isclose(ret0, ret2).all()
+
+@pytest.mark.parametrize('cov', [0, 1, 2, 3])
+def test_ols_robust(data, cov):
+    ret = fr.ols(y=y0, x=x0, data=data, stderr=f'hc{cov}')
+
+    assert ~np.isnan(ret).any().any()
+
+@pytest.mark.parametrize('cov', [0, 1, 2, 3])
+def test_ols_robust_statsmodels(data, cov):
+    fit_fr = fr.ols(y=y0, x=x0, data=data, stderr=f'hc{cov}')
+    fit_sm = smf.ols('y0 ~ 1 + x1 + x2', data=data).fit(cov_type=f'HC{cov}')
+
+    ret_fr = fit_fr[['coeff', 'stderr']].sort_index()
+    ret_sm = pd.DataFrame({
+        'coeff': fit_sm.params,
+        'stderr': np.sqrt(np.diagonal(fit_sm.cov_params()))
+    })
+    ret_sm = ret_sm.rename_axis('y0', axis=1)
+    ret_sm = ret_sm.rename(rename_statsmodels, axis=0).sort_index()
+
+    assert np.isclose(ret_fr, ret_sm).all()

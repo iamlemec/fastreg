@@ -220,7 +220,7 @@ fastreg.ols(
 - **cluster**: cluster standard errors on the given `Term`
 - **absorb**: regress on differences within groups specified by given `Term`
 - **hdfe**: use block inversion to speed up standard error calculation for given `Term`
-- **stderr**: standard error type, `True` for basic, and `hc1`-`hc3` for robust types
+- **stderr**: standard error type, `True` for basic, and `hc0`-`hc3` for robust types
 - **output**: control output, `table` gives DataFrame of estimates, `dict` gives much more info
 
 Other estimators use syntax very similar to that of `ols`. This includes `glm` in `general.py`, which also accepts custom `link` and `loss` functions. For instance, the built-in `poisson` uses and exponential link function and a Poisson loss function.

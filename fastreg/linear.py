@@ -140,7 +140,10 @@ def ols(
     elif stderr is True:
         sigma = s2*ixpx
     elif type(stderr) is str:
-        hc, = map(int, re.match(r'hc([0-3])', stderr).groups())
+        hcret = re.match(r'hc([0-3])', stderr.lower())
+        if hcret is None:
+            raise Exception(f'Unrecognized covariance type {stderr}')
+        hc, = map(int, hcret.groups())
         sigma = hcn_stderr(hc, x_mat, xe_mat, ixpx)
 
     # return requested
