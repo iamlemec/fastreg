@@ -8,6 +8,9 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
+from functools import reduce
+from operator import add
+
 from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
 from .tools import (
     categorize, hstack, chainer, decorator, func_disp, valid_rows, split_size,
@@ -52,6 +55,10 @@ def robust_eval(data, expr, extern=None):
         return vals
     else:
         return np.full(len(data), vals)
+
+# this works with __add__ overload
+def sum0(items):
+    return reduce(add, items)
 
 ##
 ## categoricals
@@ -184,6 +191,8 @@ class Factor(MetaFactor, metaclass=AccessorType):
             return Formula(self, other)
         elif isinstance(other, MetaFormula):
             return Formula(self, *other)
+        else:
+            raise TypeError(f'Not a valid addition: {other}')
 
     def __sub__(self, other):
         return Formula(self) - other
@@ -195,6 +204,8 @@ class Factor(MetaFactor, metaclass=AccessorType):
             return Term(self, *other)
         elif isinstance(other, MetaFormula):
             return Formula(*[Term(self, *t) for t in other])
+        else:
+            raise TypeError(f'Not a valid multiplier: {other}')
 
     def __call__(self, *args, **kwargs):
         cls = type(self)
@@ -241,6 +252,8 @@ class Term(MetaTerm):
             return Formula(self, other)
         elif isinstance(other, MetaFormula):
             return Formula(self, *other)
+        else:
+            raise TypeError(f'Not a valid addition: {other}')
 
     def __sub__(self, other):
         return Formula(self) - other
@@ -252,6 +265,8 @@ class Term(MetaTerm):
             return Term(*self, *other)
         elif isinstance(other, MetaFormula):
             return Formula(*[Term(*self, *t) for t in other])
+        else:
+            raise TypeError(f'Not a valid multiplier: {other}')
 
     def name(self):
         return '*'.join([f.name() for f in self])
@@ -316,6 +331,8 @@ class Formula(MetaFormula):
             return Formula(*self, other)
         elif isinstance(other, MetaFormula):
             return Formula(*self, *other)
+        else:
+            raise TypeError(f'Not a valid addition: {other}')
 
     def __sub__(self, other):
         if isinstance(other, MetaFactor):
@@ -328,6 +345,8 @@ class Formula(MetaFormula):
             return Formula(*[
                 t for t in self if t not in other
             ])
+        else:
+            raise TypeError(f'Not a valid subtraction: {other}')
 
     def __mul__(self, other):
         if isinstance(other, MetaFactor):
@@ -338,6 +357,8 @@ class Formula(MetaFormula):
             return Formula(*chainer([
                 [Term(*t1, *t2) for t1 in self] for t2 in other
             ]))
+        else:
+            raise TypeError(f'Not a valid multiplier: {other}')
 
     def raw(self, data, extern=None):
         return [t.raw(data, extern=extern) for t in self]
