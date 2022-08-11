@@ -178,11 +178,11 @@ def onehot_encode(indx, drop=True):
     rows = np.flatnonzero(sel)
     cols = indx[sel] - base
     data = np.ones_like(rows)
-    N, K = len(indx), indx.max()
+    N, K = len(indx), cols.max() + 1
     smat = sp.csr_matrix(
         (data, (rows, cols)), shape=(N, K)
     )
-    cats = np.arange(base, K+1)
+    cats = np.arange(base, K+base)
     return smat, cats
 
 ##

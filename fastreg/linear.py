@@ -20,8 +20,8 @@ from .formula import (
 from .summary import param_table
 
 def ols(
-    y=None, x=None, formula=None, data=None, absorb=None, cluster=None,
-    hdfe=None, stderr=True, drop='first', extern=None, output='table'
+    y=None, x=None, formula=None, data=None, absorb=None, cluster=None, hdfe=None,
+    stderr=True, extern=None, output='table'
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -55,7 +55,7 @@ def ols(
 
     # make design matrices
     y_vec, y_name, x0_mat, x0_names, c_mat, c_names0, valid = design_matrices(
-        y=y, x=x, formula=formula, data=data, valid0=valid, drop=drop, extern=extern,
+        y=y, x=x, formula=formula, data=data, valid0=valid, extern=extern,
         flatten=False, validate=True
     )
 

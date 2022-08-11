@@ -10,6 +10,7 @@ import scipy.sparse as sp
 
 from functools import reduce
 from operator import add
+from enum import Enum
 
 from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
 from .tools import (
@@ -60,6 +61,12 @@ def robust_eval(data, expr, extern=None):
 def sum0(items):
     return reduce(add, items)
 
+# category drop options
+class Drop(Enum):
+    NONE = 0
+    FIRST = 1
+    VALUE = 2
+
 ##
 ## categoricals
 ##
@@ -93,8 +100,24 @@ def category_indices(vals, dropna=False, return_labels=False):
     else:
         return uni_ind1, valid
 
+def zero_category(vals, labs, lab0):
+    try:
+        idx0 = labs.index(lab0)
+    except ValueError:
+        raise Exception(f'drop label not found: {lab0}')
+
+    # promote to zero index
+    labs = labs.copy()
+    labs = [labs.pop(idx0), *labs]
+
+    # shift value indices
+    vals = np.where(vals == idx0, -1, vals)
+    vals = np.where(vals < idx0, vals+1, vals)
+
+    return vals, labs
+
 # encode categories as one-hot matrix
-def encode_categorical(vals, names, method='sparse', drop=True):
+def encode_categorical(vals, names, method='sparse', drop=Drop.FIRST):
     # reindex categoricals jointly
     cats_val, cats_lab, valid = category_indices(vals, return_labels=True)
     cats_lab = [swizzle(names, l) for l in cats_lab]
@@ -103,7 +126,14 @@ def encode_categorical(vals, names, method='sparse', drop=True):
     if method == 'ordinal':
         cats_enc, cats_use = cats_val.reshape(-1, 1), cats_lab
     elif method == 'sparse':
-        cats_enc, cats_all = onehot_encode(cats_val, drop=drop)
+        dtype = drop_type(drop)
+        if dtype == Drop.VALUE:
+            sdrop = swizzle(names, drop)
+            cats_val, cats_lab = zero_category(cats_val, cats_lab, sdrop)
+            drop_first = True
+        else:
+            drop_first = dtype == Drop.FIRST
+        cats_enc, cats_all = onehot_encode(cats_val, drop=drop_first)
         cats_use = [cats_lab[i] for i in cats_all]
 
     return cats_enc, cats_use, valid
@@ -151,6 +181,31 @@ def prune_categories(mat, labels=None, method='sparse', warn=True):
 
     return mat, labels
 
+def drop_type(d):
+    return d if d in (Drop.FIRST, Drop.NONE) else Drop.VALUE
+
+def drop_repr(d):
+    t = drop_type(d)
+    if t == Drop.VALUE:
+        return d
+    else:
+        _, s = str(t).split('.')
+        return s
+
+# aggregate drop values from list of Factors to Term
+def consensus_drop(drops):
+    drops = [d for d in drops if d is not None]
+    if len(drops) == 0:
+        return None
+
+    udrop, *rdrop = set([drop_type(d) for d in drops])
+    if len(rdrop) > 0:
+        return Drop.FIRST
+    elif udrop == Drop.VALUE:
+        return drops
+    else:
+        return udrop
+
 ##
 ## formula structure
 ##
@@ -183,7 +238,7 @@ class Factor(MetaFactor, metaclass=AccessorType):
         else:
             return False
 
-    def __repr__(self):
+    def __repr__(self, **kwargs):
         return self._name
 
     def __add__(self, other):
@@ -211,18 +266,25 @@ class Factor(MetaFactor, metaclass=AccessorType):
         cls = type(self)
         return cls(self._expr, *args, **kwargs)
 
-    def to_term(self):
-        return Term(self)
+    def to_term(self, **kwargs):
+        return Term(self, **kwargs)
 
     def name(self):
         return self._name
 
-    def eval(self, data=None, extern=None):
+    def raw(self, data, extern=None):
         return robust_eval(data, self._expr, extern=extern)
 
+    def eval(self, data, **kwargs):
+        return self.to_term().eval(data, **kwargs)
+
 class Term(MetaTerm):
-    def __init__(self, *facts):
+    def __init__(self, *facts, drop=None):
         self._facts = facts
+        if drop is None:
+            self._drop = consensus_drop([getattr(f, '_drop', None) for f in facts])
+        else:
+            self._drop = drop
 
     def __hash__(self):
         return hash(str(self))
@@ -239,7 +301,8 @@ class Term(MetaTerm):
         if len(self) == 0:
             return 'I'
         else:
-            return '*'.join([str(f) for f in self])
+            ds = f'|{drop_repr(self._drop)}' if self._drop is not None else ''
+            return '*'.join([f.__repr__(drop=False) for f in self]) + ds
 
     def __iter__(self):
         return iter(self._facts)
@@ -271,10 +334,14 @@ class Term(MetaTerm):
     def name(self):
         return '*'.join([f.name() for f in self])
 
-    def raw(self, data, extern=None):
-        return np.vstack([f.eval(data, extern=extern) for f in self]).T
+    def drop(self, drop):
+        self._drop = drop
+        return self
 
-    def eval(self, data, method='sparse', drop=True, extern=None):
+    def raw(self, data, extern=None):
+        return np.vstack([f.raw(data, extern=extern) for f in self]).T
+
+    def eval(self, data, method='sparse', extern=None):
         # zero length is identity
         if len(self) == 0:
             N = len(data)
@@ -289,7 +356,7 @@ class Term(MetaTerm):
             categ_mat = categ.raw(data, extern=extern)
             categ_nam = [c.name() for c in categ]
             categ_value, categ_label, categ_valid = encode_categorical(
-                categ_mat, categ_nam, method=method, drop=drop
+                categ_mat, categ_nam, method=method, drop=self._drop
             )
 
         # handle reals
@@ -316,6 +383,17 @@ class Formula(MetaFormula):
         self._terms = tuple(dict.fromkeys(
             t if isinstance(t, MetaTerm) else Term(t) for t in terms
         )) # order preserving unique
+
+    def __eq__(self, other):
+        self_set = {frozenset(t) for t in self}
+        if isinstance(other, MetaFormula):
+            return self_set == {frozenset(t) for t in other}
+        if isinstance(other, MetaTerm):
+            return self_set == {frozenset(other)}
+        elif isinstance(other, MetaFactor):
+            return self_set == {frozenset({other})}
+        else:
+            return False
 
     def __repr__(self):
         return ' + '.join(str(t) for t in self)
@@ -363,15 +441,14 @@ class Formula(MetaFormula):
     def raw(self, data, extern=None):
         return [t.raw(data, extern=extern) for t in self]
 
-    def eval(self, data, method='sparse', drop=True, extern=None):
+    def eval(self, data, method='sparse', extern=None):
         # split by all real or not
         categ, reals = categorize(is_categorical, self)
 
         # handle categories
         if len(categ) > 0:
             categ_value, categ_valid, categ_label = zip(*[
-                t.eval(data, method=method, drop=drop, extern=extern)
-                for t in categ
+                t.eval(data, method=method, extern=extern) for t in categ
             ])
             categ_value = hstack(categ_value)
             categ_valid = np.vstack(categ_valid).all(axis=0)
@@ -403,12 +480,25 @@ class Formula(MetaFormula):
 ##
 
 class Real(MetaReal, Factor):
-    def __repr__(self):
+    def __repr__(self, **kwargs):
         return f'R({self.name()})'
 
 class Categ(MetaCateg, Factor):
-    def __repr__(self):
-        return f'C({self.name()})'
+    def __init__(self, expr, drop=Drop.FIRST, **kwargs):
+        super().__init__(expr, **kwargs)
+        self._drop = drop
+
+    def __repr__(self, drop=True, **kwargs):
+        nm = self.name()
+        if drop:
+            ds = drop_repr(self._drop)
+            return f'C({nm}|{ds})'
+        else:
+            return f'C({nm})'
+
+    def drop(self, drop):
+        self._drop = drop
+        return self
 
 # custom columns — class interface
 # eval (mandatory): an ndarray of the values
@@ -483,6 +573,7 @@ def factor(func, *args, **kwargs):
     return Custom(func, *args, **kwargs)
 
 # shortcuts
+O = Formula()
 I = Term()
 R = Real
 C = Categ
@@ -571,17 +662,14 @@ def ensure_formula(y=None, x=None, formula=None):
     return y, x
 
 def design_matrix(
-    y=None, x=None, formula=None, data=None, method='sparse', drop=True,
-    dropna=True, prune=True, warn=True, extern=None, valid0=None, flatten=True,
-    validate=False
+    x=None, formula=None, data=None, method='sparse', dropna=True, prune=True,
+    warn=True, extern=None, valid0=None, flatten=True, validate=False
 ):
-    y, x = ensure_formula(x=x, formula=formula)
-    if y is not None:
-        raise Exception('Use design_matrices (plural) for formulas with an LHS.')
+    _, x = ensure_formula(x=x, formula=formula)
 
     # evaluate x variables
     x_mat, x_val, x_names, c_mat, c_val, c_labels = x.eval(
-        data, method=method, drop=drop, extern=extern
+        data, method=method, extern=extern
     )
 
     # aggregate valid info for data
@@ -623,7 +711,7 @@ def design_matrices(
         raise Exception('Use design_matrix for formulas without an LHS')
 
     # get y data
-    y_vec, y_name = y.eval(data, extern=extern), y.name()
+    y_vec, y_name = y.raw(data, extern=extern), y.name()
     y_val = valid_rows(y_vec)
 
     # get valid x data

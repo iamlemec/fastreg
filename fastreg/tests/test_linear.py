@@ -1,5 +1,5 @@
 ##
-## fastreg test suite
+## ols test suite
 ##
 
 import re
