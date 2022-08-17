@@ -110,6 +110,12 @@ fr.ols(y=R.y, x=[I, R.x1, R.x2, (C.id1, C.id2)], data=data)
 
 Right now, categorical coding schemes other than treatment are not supported. You can pass a list of column names to `cluster` to cluster standard errors on those variables.
 
+### Categorical coding
+
+For categorical variables, one must avoid collinearity by either not including an intercept term or by dropping one value. The default for categorical variables is to drop the first value in alphabetical/numerical order. You can specify which value to drop by passing that as an argument to the specified variable. For instance, if one wanted to drop `B` from the factor `id1`, they would write `C.id1('E')` or equivalently `C('id1', 'E')`, or more verbosely `C('id1', drop='E')`. You can also tell it to not drop any values by passing `fr.NONE` and explicitly tell it to drop the first value with `fr.FIRST`.
+
+In the case of interacted categorical variables, you would typically specify the dropped value for each factor and this will be inherited to the term level. For instance, if one wished to drop `id1 = B` and `id2 = 3` from the interaction of these two terms, they would write `C.id1('B')*C.id2(3)`. An alternative method would be to write `(C.id1*C.id2).drop('B', 3)`. When creating compound categorical terms, an attempt is made to find the correct drop strategy. In the case of ambiguity or when no information is given, the default is again `FIRST`. When interacting categorical and real variables, the default is `NONE`, as this source of collinearity is no longer an issue.
+
 ### High dimensional
 
 Point estimates are obtained efficiently by using a sparse array representation of categorical variables. However, computing standard errors can be costly due to the need for large, dense matrix inversion. It is possible to make clever use of block diagonal properties to quickly compute standard errors for the case of a single (possibly interacted) categorical variable. In this case, we can recover the individual standard errors, but not the full covariance matrix. To employ this, pass a single `Term` (such as `C.id1` or `C.id1*C.id2`) with the `hdfe` flag, as in

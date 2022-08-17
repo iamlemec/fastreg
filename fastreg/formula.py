@@ -187,22 +187,20 @@ def drop_type(d):
 def drop_repr(d):
     t = drop_type(d)
     if t == Drop.VALUE:
-        return d
+        return ','.join([str(x) for x in d])
     else:
         _, s = str(t).split('.')
         return s
 
 # aggregate drop values from list of Factors to Term
 def consensus_drop(drops):
-    drops = [d for d in drops if d is not None]
     if len(drops) == 0:
         return None
-
     udrop, *rdrop = set([drop_type(d) for d in drops])
     if len(rdrop) > 0:
         return Drop.FIRST
     elif udrop == Drop.VALUE:
-        return drops
+        return tuple(drops)
     else:
         return udrop
 
@@ -287,7 +285,10 @@ class Term(MetaTerm):
             else:
                 self._drop = Drop.NONE
         else:
-            self._drop = drop
+            if drop_type(drop) == Drop.VALUE:
+                self._drop = tuple(drop)
+            else:
+                self._drop = drop
 
     def __hash__(self):
         return hash(str(self))
@@ -304,7 +305,7 @@ class Term(MetaTerm):
         if len(self) == 0:
             return 'I'
         else:
-            ds = f'|{drop_repr(self._drop)}' if self._drop is not None else ''
+            ds = f'|{drop_repr(self._drop)}' if self._drop != Drop.NONE else ''
             return '*'.join([f.__repr__(drop=False) for f in self]) + ds
 
     def __iter__(self):
@@ -337,8 +338,15 @@ class Term(MetaTerm):
     def name(self):
         return '*'.join([f.name() for f in self])
 
-    def drop(self, drop):
-        self._drop = drop
+    def drop(self, *drop):
+        if len(drop) == 1:
+            drop0, = drop
+            if drop_type(drop0) == Drop.VALUE:
+                self._drop = drop
+            else:
+                self._drop = drop0
+        else:
+            self._drop = drop
         return self
 
     def raw(self, data, extern=None):
