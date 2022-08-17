@@ -493,7 +493,7 @@ class Categ(MetaCateg, Factor):
 
     def __repr__(self, drop=True, **kwargs):
         nm = self.name()
-        if drop:
+        if drop and self._drop != Drop.NONE:
             ds = drop_repr(self._drop)
             return f'C({nm}|{ds})'
         else:
@@ -503,12 +503,8 @@ class Categ(MetaCateg, Factor):
         self._drop = drop
         return self
 
-class Categ0(Categ):
-    def __init__(self, expr, drop=None, **kwargs):
-        super().__init__(expr, drop=Drop.NONE, **kwargs)
-
 # custom columns — class interface
-# eval (mandatory): an ndarray of the values
+# raw (mandatory): an ndarray of the values
 # name (recommended): what gets displayed in the regression table
 # __repr__ (optional): what gets displayed on print [default to C/R(name)]
 
@@ -519,8 +515,8 @@ class Demean(Real):
         super().__init__(expr, name=f'{name}-μ{args}')
         self._cond = cond
 
-    def eval(self, data, extern=None):
-        vals = super().eval(data, extern=extern)
+    def raw(self, data, extern=None):
+        vals = super().raw(data, extern=extern)
         if self._cond is None:
             means = np.mean(vals)
         else:
@@ -532,10 +528,10 @@ class Demean(Real):
         return vals - means
 
 class Binned(Categ):
-    def __init__(self, expr, bins=10, labels=False, name=None):
+    def __init__(self, expr, bins=10, drop=Drop.FIRST, labels=False, name=None):
         nb = bins if type(bins) is int else len(bins)
         name = expr if name is None else name
-        super().__init__(expr, name=f'{name}:bin{nb}')
+        super().__init__(expr, drop=drop, name=f'{name}:bin{nb}')
         self._bins = bins
         self._labels = None if labels else False
 
@@ -543,6 +539,16 @@ class Binned(Categ):
         vals = super().raw(data, extern=extern)
         bins = pd.cut(vals, self._bins, labels=self._labels)
         return bins
+
+# shorthand for drop=NONE
+
+class Categ0(Categ):
+    def __init__(self, expr, *args, drop=None, **kwargs):
+        super().__init__(expr, *args, drop=Drop.NONE, **kwargs)
+
+class Binned0(Binned):
+    def __init__(self, expr, *args, drop=None, **kwargs):
+        super().__init__(expr, *args, drop=Drop.NONE, **kwargs)
 
 # custom columns — functional interface
 
@@ -584,9 +590,10 @@ O = Formula()
 I = Term()
 R = Real
 C = Categ
-C0 = Categ0
 D = Demean
 B = Binned
+C0 = Categ0
+B0 = Binned0
 
 ##
 ## conversion
