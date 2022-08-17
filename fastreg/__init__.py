@@ -5,10 +5,13 @@ from . import testing
 
 from .formula import (
     Factor, Term, Formula, Real, Categ, Demean, Binned, Custom, sum0 as sum,
-    O, I, R, C, D, B, Drop, robust_eval, factor, design_matrix, design_matrices
+    O, I, R, C, C0, D, B, Drop, robust_eval, factor, design_matrix, design_matrices
 )
 from .linear import ols
 from .testing import dataset
+
+NONE = Drop.NONE
+FIRST = Drop.FIRST
 
 try:
     from .general import (

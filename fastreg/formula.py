@@ -282,7 +282,10 @@ class Term(MetaTerm):
     def __init__(self, *facts, drop=None):
         self._facts = facts
         if drop is None:
-            self._drop = consensus_drop([getattr(f, '_drop', None) for f in facts])
+            if all(is_categorical(f) for f in facts):
+                self._drop = consensus_drop([f._drop for f in facts])
+            else:
+                self._drop = Drop.NONE
         else:
             self._drop = drop
 
@@ -500,6 +503,10 @@ class Categ(MetaCateg, Factor):
         self._drop = drop
         return self
 
+class Categ0(Categ):
+    def __init__(self, expr, drop=None, **kwargs):
+        super().__init__(expr, drop=Drop.NONE, **kwargs)
+
 # custom columns — class interface
 # eval (mandatory): an ndarray of the values
 # name (recommended): what gets displayed in the regression table
@@ -532,8 +539,8 @@ class Binned(Categ):
         self._bins = bins
         self._labels = None if labels else False
 
-    def eval(self, data, extern=None):
-        vals = super().eval(data, extern=extern)
+    def raw(self, data, extern=None):
+        vals = super().raw(data, extern=extern)
         bins = pd.cut(vals, self._bins, labels=self._labels)
         return bins
 
@@ -577,6 +584,7 @@ O = Formula()
 I = Term()
 R = Real
 C = Categ
+C0 = Categ0
 D = Demean
 B = Binned
 
