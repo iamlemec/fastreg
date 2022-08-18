@@ -680,7 +680,10 @@ def ensure_formula(y=None, x=None, formula=None):
     if formula is not None:
         y, x = parse_formula(formula)
     else:
-        y = parse_item(y) if y is not None else None
+        if isinstance(y, (MetaTerm, MetaFormula)):
+            raise Exception(f'LHS variable must be a single factor. Instead got: y = {y}')
+        else:
+            y = parse_item(y) if y is not None else None
         x = parse_list(x)
     return y, x
 
