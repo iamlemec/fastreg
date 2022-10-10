@@ -729,7 +729,7 @@ def design_matrix(
 
 def design_matrices(
     y=None, x=None, formula=None, data=None, dropna=True, extern=None,
-    valid0=None, validate=False, **kwargs
+    valid0=None, validate=False, warn=True, **kwargs
 ):
     # parse into pythonic formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -743,13 +743,13 @@ def design_matrices(
     # get valid x data
     x_val0 = all_valid(valid0, y_val)
     *x_ret, valid = design_matrix(
-        x=x, data=data, dropna=dropna, extern=extern, valid0=x_val0,
+        x=x, data=data, dropna=dropna, extern=extern, valid0=x_val0, warn=warn,
         validate=True, **kwargs
     )
 
     # drop invalid y
     if dropna:
-        y_vec, = drop_invalid(valid, y_vec)
+        y_vec, = drop_invalid(valid, y_vec, warn=warn)
 
     # return combined data
     ret = y_vec, y_name, *x_ret

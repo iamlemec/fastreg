@@ -21,7 +21,7 @@ from .summary import param_table
 
 def ols(
     y=None, x=None, formula=None, data=None, absorb=None, cluster=None, hdfe=None,
-    stderr=True, extern=None, output='table'
+    stderr=True, extern=None, warn=True, output='table'
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -55,7 +55,7 @@ def ols(
 
     # make design matrices
     y_vec, y_name, x0_mat, x0_names, c_mat, c_names0, valid = design_matrices(
-        y=y, x=x, formula=formula, data=data, valid0=valid, extern=extern,
+        y=y, x=x, formula=formula, data=data, valid0=valid, extern=extern, warn=warn,
         flatten=False, validate=True
     )
 
