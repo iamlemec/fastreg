@@ -1,19 +1,14 @@
+import pandas as pd
+from operator import and_
+
 import jax
-import jax.lax as lax
-from jax.scipy.special import gammaln
 import jax.numpy as np
 import jax.numpy.linalg as la
-from jax.tree_util import (
-    tree_flatten, tree_leaves, tree_map, tree_reduce, tree_structure
-)
-from jax.interpreters.xla import DeviceArray
-import numpy as np0
-import scipy.sparse as sp
-import pandas as pd
-from operator import and_, add
+from jax.scipy.special import gammaln
+from jax.tree_util import tree_flatten, tree_leaves, tree_map, tree_reduce
 
 from .formula import (
-    design_matrices, parse_item, parse_tuple, parse_list, ensure_formula, Categ
+    design_matrices, parse_tuple, ensure_formula, Categ
 )
 from .tools import block_inverse, chainer, maybe_diag, atleast_2d
 from .summary import param_table
@@ -62,8 +57,15 @@ losses = {
     'lstsq': lambda p, yh, y: lstsq_loss(yh, y)
 }
 
+def ensure_loss(s):
+    if type(s) is str:
+        return losses[s]
+    else:
+        return s
+
 # modifiers
 def zero_inflate(like0, clip_like=20.0, key='lpzero'):
+    like0 = ensure_loss(like0)
     def like(p, yh, y):
         pzero = sigmoid(p[key])
         clike = np.clip(like0(p, yh, y), a_max=clip_like)
@@ -294,7 +296,7 @@ def maxlike(
 
     # compute standard errors
     hess = h_fun(params, data)
-    fish = tree_matfun(inv_fun, hess, params)
+    fish = tree_matfun(np.linalg.inv, hess, params)
     omega = tree_map(lambda x: -x, fish)
 
     return params1, omega
@@ -322,9 +324,6 @@ def maxlike_panel(
     # get vectorized gradient
     gv_fun = jax.jit(jax.vmap(jax.grad(model), (None, 0), 0), backend=backend)
 
-    # batching for stderr
-    hload = loader(batch_stderr)
-
     # compute standard errors
     if 'hdfe' in params:
         sigma = diag_fisher(gv_fun, params1, loader)
@@ -334,7 +333,7 @@ def maxlike_panel(
     return params1, sigma
 
 # make a glm model and compile
-def glm_model(link, loss, hdfe=None, drop='first'):
+def glm_model(link, loss, hdfe=None):
     if type(link) is str:
         link = links[link]
     if type(loss) is str:
@@ -349,10 +348,7 @@ def glm_model(link, loss, hdfe=None, drop='first'):
         linear = xdat @ real
         for i, c in enumerate(categ):
             cidx = cdat.T[i] # needed for vmap to work
-            if drop == 'first':
-                linear += np.where(cidx > 0, categ[c][cidx-1], 0.0)
-            else:
-                linear += categ[c][cidx]
+            linear += np.where(cidx >= 0, categ[c][cidx], 0.0) # -1 means drop
         pred = link(linear)
         like = loss(par, pred, ydat)
         return np.mean(like)
@@ -362,8 +358,8 @@ def glm_model(link, loss, hdfe=None, drop='first'):
 # default glm specification
 def glm(
     y=None, x=None, formula=None, hdfe=None, data=None, extra={}, model=None,
-    link=None, loss=None, extern=None, stderr=True, drop='first', display=True,
-    epochs=None, per=None, output='table', **kwargs
+    link=None, loss=None, extern=None, stderr=True, display=True, epochs=None,
+    per=None, output='table', **kwargs
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -380,8 +376,6 @@ def glm(
     )
 
     # accumulate all names
-    if drop == 'first':
-        c_names0 = {k: v[1:] for k, v in c_names0.items()}
     c_names = chainer(c_names0.values())
     names = x_names + c_names
 
@@ -397,7 +391,7 @@ def glm(
 
     # compile model if needed
     if model is None:
-        model = glm_model(link, loss, hdfe=hdfe, drop=drop)
+        model = glm_model(link, loss, hdfe=hdfe)
 
     # displayer
     def disp(e, l, p):

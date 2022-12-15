@@ -3,16 +3,13 @@
 ##
 
 import re
-import sys
 import numpy as np
 import pandas as pd
-import scipy.sparse as sp
 
 from functools import reduce
 from operator import add
-from enum import Enum
 
-from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg
+from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg, Drop
 from .tools import (
     categorize, hstack, chainer, decorator, func_disp, valid_rows, split_size,
     atleast_2d, fillna, all_valid, splice, factorize_2d, onehot_encode
@@ -61,12 +58,6 @@ def robust_eval(data, expr, extern=None):
 def sum0(items):
     return reduce(add, items)
 
-# category drop options
-class Drop(Enum):
-    NONE = 0
-    FIRST = 1
-    VALUE = 2
-
 ##
 ## categoricals
 ##
@@ -100,6 +91,7 @@ def category_indices(vals, dropna=False, return_labels=False):
     else:
         return uni_ind1, valid
 
+# splice out a category to -1 (in ordinal space)
 def zero_category(vals, labs, lab0):
     try:
         idx0 = labs.index(lab0)
@@ -116,23 +108,28 @@ def zero_category(vals, labs, lab0):
 
     return vals, labs
 
-# encode categories as one-hot matrix
+# encode categories as one-hot matrix or ordinals
 def encode_categorical(vals, names, method='sparse', drop=Drop.FIRST):
     # reindex categoricals jointly
     cats_val, cats_lab, valid = category_indices(vals, return_labels=True)
     cats_lab = [swizzle(names, l) for l in cats_lab]
 
-    # if ordinal no labels are dropped
+    # here 0 corresponds to dropped
+    dtype = drop_type(drop)
+    if dtype == Drop.VALUE:
+        sdrop = swizzle(names, drop)
+        cats_val, cats_lab = zero_category(cats_val, cats_lab, sdrop)
+        drop_first = True
+    else:
+        drop_first = dtype == Drop.FIRST
+
+    # implement final encoding (now -1 is dropped)
     if method == 'ordinal':
         cats_enc, cats_use = cats_val.reshape(-1, 1), cats_lab
+        if drop_first:
+            cats_enc -= 1
+            cats_use = cats_use[1:]
     elif method == 'sparse':
-        dtype = drop_type(drop)
-        if dtype == Drop.VALUE:
-            sdrop = swizzle(names, drop)
-            cats_val, cats_lab = zero_category(cats_val, cats_lab, sdrop)
-            drop_first = True
-        else:
-            drop_first = dtype == Drop.FIRST
         cats_enc, cats_all = onehot_encode(cats_val, drop=drop_first)
         cats_use = [cats_lab[i] for i in cats_all]
 
@@ -151,35 +148,65 @@ def drop_invalid(valid, *mats, warn=True):
         ]
     return *mats,
 
-# remove unused categories (sparse `mat` requires `labels`)
-def prune_categories(mat, labels=None, method='sparse', warn=True):
-    # get positive count cats
-    if method == 'sparse':
-        vcats = np.ravel((mat!=0).sum(axis=0)) > 0
-        Kt = [len(ls) for ls in labels.values()]
-        tvalid = split_size(vcats, Kt)
-        P, K = np.sum(vcats), len(vcats)
-    elif method == 'ordinal':
-        vcats = [np.bincount(cm) > 0 for cm in mat.T]
-        P = sum([np.sum(vc) for vc in vcats])
-        K = sum([len(vc) for vc in vcats])
+def prune_sparse(mat, labels, warn=True):
+    # get active categories
+    vcats = np.ravel((mat!=0).sum(axis=0)) > 0
+    P = np.sum(vcats)
 
-    # prune if needed
-    if P < K:
-        if warn:
-            print(f'pruning {K-P}/{K} unused categories')
+    # get total categories
+    Kt = [len(ls) for ls in labels.values()]
+    K = sum(Kt)
 
-        # modify data matrix
-        if method == 'sparse':
-            mat = mat[:, vcats]
-            labels = {
-                t: [l for l, v in zip(ls, vs) if v]
-                for (t, ls), vs in zip(labels.items(), tvalid)
-            }
-        elif method == 'ordinal':
-            mat = np.vstack([category_indices(cm) for cm in mat.T]).T
+    # bail if total
+    if P == K:
+        return mat, labels
+    if warn:
+        print(f'pruning {K-P}/{K} unused categories')
+
+    # split back into terms
+    vcats = split_size(vcats, Kt)
+
+    # modify data matrices
+    mat = mat[:, vcats]
+    labels = {
+        t: [l for l, v in zip(ls, vs) if v]
+        for (t, ls), vs in zip(labels.items(), vcats)
+    }
 
     return mat, labels
+
+def prune_ordinal(mat, labels, warn=True):
+    # get active categories
+    cvals, cinvs, cnums = zip(*[
+        np.unique(cm, return_inverse=True, return_counts=True) for cm in mat.T
+    ])
+    P = sum([len(cn) for cn in cnums])
+
+    # get total categories
+    Kt = [len(ls) for ls in labels.values()]
+    K = sum(Kt)
+
+    # bail if total
+    if P >= K:
+        return mat, labels
+    if warn:
+        print(f'pruning {K-P}/{K} unused categories')
+
+    # modify data matrices (tricky to exclude -1)
+    mat = np.vstack([ci+np.min(cv) for cv, ci in zip(cvals, cinvs)]).T
+    labels = {
+        t: [ls[v] for v in cv if v != -1]
+        for (t, ls), cv in zip(labels.items(), cvals)
+    }
+
+    return mat, labels
+
+# remove unused categories (sparse `mat` requires `labels`)
+def prune_categories(mat, labels, method='sparse', warn=True):
+    if method == 'sparse':
+        return prune_sparse(mat, labels, warn=warn)
+    elif method == 'ordinal':
+        return prune_ordinal(mat, labels, warn=warn)
 
 def drop_type(d):
     return d if d in (Drop.FIRST, Drop.NONE) else Drop.VALUE
@@ -626,11 +653,7 @@ def parse_term(term):
 
 # this can only handle treatment coding, but that's required for sparsity
 def parse_formula(form):
-    try:
-        from patsy.desc import ModelDesc
-    except:
-        print('Please install patsy for formula parsing')
-        return
+    from patsy.desc import ModelDesc
 
     # use patsy for formula parse
     desc = ModelDesc.from_formula(form)
