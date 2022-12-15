@@ -37,7 +37,7 @@ links = {
     'logit': sigmoid
 }
 
-# loss functions
+# loss functions (only parameter relevant terms)
 def binary_loss(yh, y):
     return y*log(yh) + (1-y)*log(1-yh)
 
@@ -50,18 +50,19 @@ def negbin_loss(r, yh, y):
 def lstsq_loss(yh, y):
     return -(y-yh)**2
 
-def ols_loss(p, yh, y):
+def normal_loss(p, yh, y):
     lsigma2 = p['lsigma2']
     sigma2 = np.exp(lsigma2)
-    like = -lsigma2 + 0.5*lstsq_loss(yh, y)/sigma2
+    like = -0.5*lsigma2 + 0.5*lstsq_loss(yh, y)/sigma2
     return like
 
 losses = {
     'binary': lambda p, yh, y: binary_loss(yh, y),
     'poisson': lambda p, yh, y: poisson_loss(yh, y),
     'negbin': lambda p, yh, y: negbin_loss(np.exp(p['lr']), yh, y),
+    'normal': lambda p, yh, y: normal_loss(p, yh, y),
+    'lognorm': lambda p, yh, y: normal_loss(p, yh, log(y)),
     'lstsq': lambda p, yh, y: lstsq_loss(yh, y),
-    'ols': lambda p, yh, y: ols_loss(p, yh, y)
 }
 
 def ensure_loss(s):
@@ -75,9 +76,9 @@ def zero_inflate(like0, clip_like=20.0, key='lpzero'):
     like0 = ensure_loss(like0)
     def like(p, yh, y):
         pzero = sigmoid(p[key])
-        clike = np.clip(like0(p, yh, y), a_max=clip_like)
-        like = pzero*(y==0) + (1-pzero)*np.exp(clike)*(y>0)
-        return log(like)
+        plike = np.clip(like0(p, yh, y), a_max=clip_like)
+        llike = np.where(y == 0, log(pzero), log(1-pzero) + plike)
+        return llike
     return like
 
 ##
@@ -231,7 +232,7 @@ def flatten_output(beta, sigma):
 ## optimizers
 ##
 
-def adam(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, disp=None):
+def rmsprop(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, disp=None):
     # parameter info
     params = tree_map(np.array, params0)
 
@@ -283,7 +284,7 @@ def adam(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, disp=None):
 
 # maximum likelihood using jax - this expects a mean log likelihood
 def maxlike(
-    model=None, params=None, data=None, stderr=False, optim=adam, backend='gpu',
+    model=None, params=None, data=None, stderr=False, optim=rmsprop, backend='gpu',
     **kwargs
 ):
     # get model gradients
@@ -312,7 +313,7 @@ def maxlike(
 # the assumes the data is batchable, which usually means panel-like
 # a toplevel hdfe variable is treated special-like
 def maxlike_panel(
-    model=None, params=None, data=None, vg_fun=None, stderr=True, optim=adam,
+    model=None, params=None, data=None, vg_fun=None, stderr=True, optim=rmsprop,
     batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs
 ):
     # compute gradient for optim
@@ -365,7 +366,7 @@ def glm_model(link, loss, hdfe=None):
 # default glm specification
 def glm(
     y=None, x=None, formula=None, hdfe=None, data=None, extra={}, model=None,
-    link=None, loss=None, extern=None, stderr=True, display=True, epochs=None,
+    link='ident', loss=None, extern=None, stderr=True, display=True, epochs=None,
     per=None, output='table', **kwargs
 ):
     # convert to formula system
@@ -378,19 +379,16 @@ def glm(
         hdfe = c_hdfe.name()
 
     # construct design matrices
-    y_vec, y_name, x_mat, x_names, c_mat, c_names0 = design_matrices(
+    y_vec, y_name, x_mat, x_names, c_mat, c_names = design_matrices(
         y=y, x=x, data=data, method='ordinal', extern=extern, flatten=False
     )
 
     # accumulate all names
-    c_names = chainer(c_names0.values())
-    names = x_names + c_names
+    c_names = {c.name(): ls for c, ls in c_names.items()}
 
     # get data shape
     N = len(y_vec)
     Kx = len(x_names)
-    Kc = len(c_names0)
-    Kl = [len(c) for c in c_names0.values()]
 
     # choose number of epochs
     epochs = max(1, 2_000_000 // N) if epochs is None else epochs
@@ -401,42 +399,44 @@ def glm(
         model = glm_model(link, loss, hdfe=hdfe)
 
     # displayer
-    def disp(e, l, p):
+    def disp0(e, l, p):
         real, categ = p['real'], p['categ']
         if hdfe is not None:
             categ = categ.copy()
             categ[hdfe] = p['hdfe']
         mcats = np.array([np.mean(c) for c in categ.values()])
         if e % per == 0:
-            print(f'[{e:3d}] loss = {l:.5f}, real = {np.mean(real):.5f}, categ = {np.mean(mcats):.5f}')
-    disp1 = disp if display else None
+            μreal, μcats = np.mean(real), np.mean(mcats)
+            print(f'[{e:3d}] {l:.5f}, {μreal=:.5f}, {μcats=:.5f}')
+    disp = disp0 if display else None
 
     # organize data and initial params
     dat = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
-    pcateg = {c.name(): np.zeros(s) for c, s in zip(c_names0, Kl)}
+    pcateg = {c: np.zeros(len(ls)) for c, ls in c_names.items()}
     params = {'real': np.zeros(Kx), 'categ': pcateg, **extra}
     if hdfe is not None:
         params['hdfe'] = params['categ'].pop(hdfe)
 
     # estimate model
     beta, sigma = maxlike_panel(
-        model=model, params=params, data=dat, stderr=stderr, disp=disp1,
+        model=model, params=params, data=dat, stderr=stderr, disp=disp,
         epochs=epochs, **kwargs
     )
 
+    # splice in hdfe results
     if hdfe is not None:
         beta['categ'][hdfe] = beta.pop('hdfe')
         if stderr:
             sigma['categ'][hdfe] = {'categ': {hdfe: sigma.pop('hdfe')}}
 
+    # return requested info
     if output == 'table':
+        names = x_names + chainer(c_names.values())
         beta_vec, sigma_vec = flatten_output(beta, sigma)
         return param_table(beta_vec, y_name, names, sigma=sigma_vec)
     elif output == 'dict':
-        return {
-            'beta': beta,
-            'sigma': sigma,
-        }
+        names = {'real': x_names, 'categ': c_names}
+        return names, beta, sigma
 
 # logit regression
 def logit(y=None, x=None, data=None, **kwargs):
