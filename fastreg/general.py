@@ -50,11 +50,18 @@ def negbin_loss(r, yh, y):
 def lstsq_loss(yh, y):
     return -(y-yh)**2
 
+def ols_loss(p, yh, y):
+    lsigma2 = p['lsigma2']
+    sigma2 = np.exp(lsigma2)
+    like = -lsigma2 + 0.5*lstsq_loss(yh, y)/sigma2
+    return like
+
 losses = {
     'binary': lambda p, yh, y: binary_loss(yh, y),
     'poisson': lambda p, yh, y: poisson_loss(yh, y),
     'negbin': lambda p, yh, y: negbin_loss(np.exp(p['lr']), yh, y),
-    'lstsq': lambda p, yh, y: lstsq_loss(yh, y)
+    'lstsq': lambda p, yh, y: lstsq_loss(yh, y),
+    'ols': lambda p, yh, y: ols_loss(p, yh, y)
 }
 
 def ensure_loss(s):
@@ -69,7 +76,7 @@ def zero_inflate(like0, clip_like=20.0, key='lpzero'):
     def like(p, yh, y):
         pzero = sigmoid(p[key])
         clike = np.clip(like0(p, yh, y), a_max=clip_like)
-        like = pzero*(y==0) + (1-pzero)*np.exp(clike)
+        like = pzero*(y==0) + (1-pzero)*np.exp(clike)*(y>0)
         return log(like)
     return like
 
@@ -401,7 +408,7 @@ def glm(
             categ[hdfe] = p['hdfe']
         mcats = np.array([np.mean(c) for c in categ.values()])
         if e % per == 0:
-            print(f'[{e:3d}] {l:.5f}: {np.mean(real):.5f} {np.mean(mcats):.5f}')
+            print(f'[{e:3d}] loss = {l:.5f}, real = {np.mean(real):.5f}, categ = {np.mean(mcats):.5f}')
     disp1 = disp if display else None
 
     # organize data and initial params
@@ -462,13 +469,7 @@ def zinf_negbin(y=None, x=None, data=None, clip_like=20.0, **kwargs):
         extra={'lpzero': 0.0, 'lr': 0.0}, **kwargs
     )
 
-# ordinary least squares (just for kicks)
-def ols_loss(p, yh, y):
-    lsigma2 = p['lsigma2']
-    sigma2 = np.exp(lsigma2)
-    like = -lsigma2 + lstsq_loss(yh, y)/sigma2
-    return like
-
+# implement ols with full sigma
 def gols(y=None, x=None, data=None, **kwargs):
     return glm(
         y=y, x=x, data=data, link='ident', loss=ols_loss,

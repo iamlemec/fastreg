@@ -123,26 +123,27 @@ def encode_categorical(vals, names, method='sparse', drop=Drop.FIRST):
     else:
         drop_first = dtype == Drop.FIRST
 
-    # implement final encoding (now -1 is dropped)
-    if method == 'ordinal':
-        cats_enc, cats_use = cats_val.reshape(-1, 1), cats_lab
-        if drop_first:
-            cats_enc -= 1
-            cats_use = cats_use[1:]
-    elif method == 'sparse':
-        cats_enc, cats_all = onehot_encode(cats_val, drop=drop_first)
-        cats_use = [cats_lab[i] for i in cats_all]
+    # handle drop first case (now -1 is dropped)
+    if drop_first:
+        cats_val -= 1
+        cats_lab = cats_lab[1:]
 
-    return cats_enc, cats_use, valid
+    # implement final encoding
+    if method == 'ordinal':
+        cats_enc = cats_val.reshape(-1, 1)
+    elif method == 'sparse':
+        cats_enc = onehot_encode(cats_val)
+
+    return cats_enc, cats_lab, valid
 
 # subset data allowing for missing chunks
-def drop_invalid(valid, *mats, warn=True):
+def drop_invalid(valid, *mats, warn=None, name='data'):
     V, N = np.sum(valid), len(valid)
     if V == 0:
         raise Exception('all rows contain null data')
     elif V < N:
         if warn:
-            print(f'dropping {N-V}/{N} null data points')
+            print(f'dropping {N-V}/{N} null {name} rows')
         mats = [
             m[valid] if m is not None else None for m in mats
         ]
@@ -727,7 +728,7 @@ def design_matrix(
     # drop null values if requested
     if dropna:
         x_mat, c_mat = drop_invalid(
-            valid, x_mat, c_mat, warn=warn
+            valid, x_mat, c_mat, warn=warn, name='x'
         )
 
     # prune empty categories if requested
@@ -772,7 +773,7 @@ def design_matrices(
 
     # drop invalid y
     if dropna:
-        y_vec, = drop_invalid(valid, y_vec, warn=warn)
+        y_vec, = drop_invalid(valid, y_vec, warn=warn, name='y')
 
     # return combined data
     ret = y_vec, y_name, *x_ret
