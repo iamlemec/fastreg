@@ -6,6 +6,8 @@ import jax.numpy as np
 import jax.numpy.linalg as la
 from jax.scipy.special import gammaln
 from jax.tree_util import tree_flatten, tree_leaves, tree_map, tree_reduce
+from jax.lax import logistic
+from jax.numpy import exp
 
 from .formula import (
     design_matrices, parse_tuple, ensure_formula, Categ
@@ -14,28 +16,16 @@ from .tools import block_inverse, chainer, maybe_diag, atleast_2d
 from .summary import param_table
 
 ##
-## constants
+## basic functions
 ##
 
-# numbers
-eps = 1e-7
+# clamped log
+def log(x, ε=1e-7):
+    return np.log(np.maximum(ε, x))
 
 ##
 ## canned models
 ##
-
-def sigmoid(x):
-    return 1/(1+np.exp(-x))
-
-def log(x):
-    return np.log(np.maximum(eps, x))
-
-# link functions
-links = {
-    'ident': lambda x: x,
-    'exp': np.exp,
-    'logit': sigmoid
-}
 
 # loss functions (only parameter relevant terms)
 def binary_loss(yh, y):
@@ -57,9 +47,9 @@ def normal_loss(p, yh, y):
     return like
 
 losses = {
-    'binary': lambda p, yh, y: binary_loss(yh, y),
-    'poisson': lambda p, yh, y: poisson_loss(yh, y),
-    'negbin': lambda p, yh, y: negbin_loss(np.exp(p['lr']), yh, y),
+    'logit': lambda p, yh, y: binary_loss(logistic(yh), y),
+    'poisson': lambda p, yh, y: poisson_loss(exp(yh), y),
+    'negbin': lambda p, yh, y: negbin_loss(exp(p['lr']), exp(yh), y),
     'normal': lambda p, yh, y: normal_loss(p, yh, y),
     'lognorm': lambda p, yh, y: normal_loss(p, yh, log(y)),
     'lstsq': lambda p, yh, y: lstsq_loss(yh, y),
@@ -75,7 +65,7 @@ def ensure_loss(s):
 def zero_inflate(like0, clip_like=20.0, key='lpzero'):
     like0 = ensure_loss(like0)
     def like(p, yh, y):
-        pzero = sigmoid(p[key])
+        pzero = logistic(p[key])
         plike = np.clip(like0(p, yh, y), a_max=clip_like)
         llike = np.where(y == 0, log(pzero), log(1-pzero) + plike)
         return llike
@@ -232,7 +222,7 @@ def flatten_output(beta, sigma):
 ## optimizers
 ##
 
-def rmsprop(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, disp=None):
+def rmsprop(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, eps=1e-7, disp=None):
     # parameter info
     params = tree_map(np.array, params0)
 
@@ -340,10 +330,8 @@ def maxlike_panel(
 
     return params1, sigma
 
-# make a glm model and compile
-def glm_model(link, loss, hdfe=None):
-    if type(link) is str:
-        link = links[link]
+# make a glm model with a particular loss
+def glm_model(loss, hdfe=None):
     if type(loss) is str:
         loss = losses[loss]
 
@@ -353,11 +341,10 @@ def glm_model(link, loss, hdfe=None):
         real, categ = par['real'], par['categ']
         if hdfe is not None:
             categ[hdfe] = par.pop('hdfe')
-        linear = xdat @ real
+        pred = xdat @ real
         for i, c in enumerate(categ):
             cidx = cdat.T[i] # needed for vmap to work
-            linear += np.where(cidx >= 0, categ[c][cidx], 0.0) # -1 means drop
-        pred = link(linear)
+            pred += np.where(cidx >= 0, categ[c][cidx], 0.0) # -1 means drop
         like = loss(par, pred, ydat)
         return np.mean(like)
 
@@ -366,8 +353,8 @@ def glm_model(link, loss, hdfe=None):
 # default glm specification
 def glm(
     y=None, x=None, formula=None, hdfe=None, data=None, extra={}, model=None,
-    link='ident', loss=None, extern=None, stderr=True, display=True, epochs=None,
-    per=None, output='table', **kwargs
+    loss=None, extern=None, stderr=True, display=True, epochs=None, per=None,
+    output='table', **kwargs
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -396,7 +383,7 @@ def glm(
 
     # compile model if needed
     if model is None:
-        model = glm_model(link, loss, hdfe=hdfe)
+        model = glm_model(loss, hdfe=hdfe)
 
     # displayer
     def disp0(e, l, p):
@@ -440,38 +427,30 @@ def glm(
 
 # logit regression
 def logit(y=None, x=None, data=None, **kwargs):
-    return glm(y=y, x=x, data=data, link='logit', loss='binary', **kwargs)
+    return glm(y=y, x=x, data=data, loss='logit', **kwargs)
 
 # poisson regression
 def poisson(y=None, x=None, data=None, **kwargs):
-    return glm(y=y, x=x, data=data, link='exp', loss='poisson', **kwargs)
+    return glm(y=y, x=x, data=data, loss='poisson', **kwargs)
 
 # zero inflated poisson regression
 def zinf_poisson(y=None, x=None, data=None, clip_like=20.0, **kwargs):
-    return glm(
-        y=y, x=x, data=data, link='exp',
-        loss=zero_inflate(losses['poisson'], clip_like=clip_like),
-        extra={'lpzero': 0.0}, **kwargs
-    )
+    loss = zero_inflate(losses['poisson'], clip_like=clip_like)
+    extra = {'lpzero': 0.0}
+    return glm(y=y, x=x, data=data, loss=loss, extra=extra, **kwargs)
 
 # negative binomial regression
 def negbin(y=None, x=None, data=None, **kwargs):
-    return glm(
-        y=y, x=x, data=data, link='exp', loss='negbin', extra={'lr': 0.0},
-        **kwargs
-    )
+    extra = {'lr': 0.0}
+    return glm(y=y, x=x, data=data, loss='negbin', extra=extra, **kwargs)
 
 # zero inflated poisson regression
 def zinf_negbin(y=None, x=None, data=None, clip_like=20.0, **kwargs):
-    return glm(
-        y=y, x=x, data=data, link='exp',
-        loss=zero_inflate(losses['negbin'], clip_like=clip_like),
-        extra={'lpzero': 0.0, 'lr': 0.0}, **kwargs
-    )
+    loss = zero_inflate(losses['negbin'], clip_like=clip_like)
+    extra = {'lpzero': 0.0, 'lr': 0.0}
+    return glm(y=y, x=x, data=data, loss=loss, extra=extra, **kwargs)
 
 # implement ols with full sigma
 def gols(y=None, x=None, data=None, **kwargs):
-    return glm(
-        y=y, x=x, data=data, link='ident', loss=ols_loss,
-        extra={'lsigma2': 0.0}, **kwargs
-    )
+    extra = {'lsigma2': 0.0}
+    return glm(y=y, x=x, data=data, loss='normal', extra=extra, **kwargs)

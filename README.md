@@ -149,7 +149,7 @@ You can use the `hdfe` flag here as well, for instance:
 fr.poisson(y=R.p, x=I+R.x1+R.x2+C.id1, hdfe=C.id2, data=data)
 ```
 
-Under the hood, this is all powered by a maximum likelihood estimation routine in `general.py` called `maxlike_panel`. Just give this a function that computes the mean log likelihood and it'll take care of the rest, computing standard errors from the inverse of the Fisher information matrix. This is then specialized into a generalized linear model routine called `glm`, which accepts link and loss functions along with data. I've provided implementations for `logit`, `poisson`, `negbin`, `zinf_poisson`, `zinf_negbin`, and `gols`.
+Under the hood, this is all powered by a maximum likelihood estimation routine in `general.py` called `maxlike_panel`. Just give this a function that computes the mean log likelihood and it'll take care of the rest, computing standard errors from the inverse of the Fisher information matrix. This is then specialized into a generalized linear model routine called `glm`, which accepts a loss function along with data. I've provided implementations for `logit`, `poisson`, `negbin`, `zinf_poisson`, `zinf_negbin`, and `gols`.
 
 ### Custom factors
 
@@ -229,17 +229,16 @@ fastreg.ols(
 - **stderr**: standard error type, `True` for basic, and `hc0`-`hc3` for robust types
 - **output**: control output, `table` gives DataFrame of estimates, `dict` gives much more info
 
-Other estimators use syntax very similar to that of `ols`. This includes `glm` in `general.py`, which also accepts custom `link` and `loss` functions. For instance, the built-in `poisson` uses and exponential link function and a Poisson loss function. Below only the arguments not common to `ols` are listed.
+Other estimators use syntax very similar to that of `ols`. This includes `glm` in `general.py`, which also accepts custom a `loss` functions. For instance, the built-in `poisson` uses a Poisson likelihood loss function (with an exponential link). Below only the arguments not common to `ols` are listed.
 
 ```python
 fastreg.glm(
-    y=None, x=None, formula=None, data=None, hdfe=None, link='ident', loss=None, model=None,
+    y=None, x=None, formula=None, data=None, hdfe=None, loss=None, model=None,
     extra={}, epochs=None, display=True, per=None, stderr=True, output='table'
 )
 ```
-- **link**: the initial mapping to apply to the linear predictor, can be one of `'ident'` (default), `'exp'`, `'logit'`, or a custom function
-- **loss**: the loss (log likelihood) function to use for optimization, can be one of `'binary'`, `'poisson'`, `'negbin'`, `'normal'`, `'lognorm'`, `'lstsq'`, or a custom function that accepts `(params, predict, data)`
-- **model**: in lieu of `link`/`loss`, one can specify a model function mapping from `(params, data)` to an average log likelihood
+- **loss**: the loss (log likelihood) function to use for optimization, can be one of `'logit'`, `'poisson'`, `'negbin'`, `'normal'`, `'lognorm'`, `'lstsq'`, or a custom function that accepts `(params, predict, data)`
+- **model**: in lieu of a loss function, one can specify a model function mapping from `(params, data)` to an average log likelihood
 - **extra**: a `dict` of extra parameter names mapping to initial values that can be accessed by the `loss` function
 - **epochs**: how many full iterations over the dataset to do during optimization
 - **display**: whether to display updates on objective and parameter values during optimization
