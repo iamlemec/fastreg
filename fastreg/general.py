@@ -12,7 +12,7 @@ from jax.numpy import exp
 from .formula import (
     design_matrices, parse_tuple, ensure_formula, Categ
 )
-from .tools import block_inverse, chainer, maybe_diag, atleast_2d
+from .tools import block_inverse, chainer, maybe_diag, atleast_2d, hstack
 from .summary import param_table
 
 ##
@@ -204,17 +204,17 @@ def diag_fisher(vg_fun, params, loader):
 # just get mean and var vectors
 def flatten_output(beta, sigma):
     beta_real = beta['real']
-    beta_categ = np.hstack([
+    beta_categ = hstack([
         beta['categ'][c] for c in beta['categ']
     ])
 
     sigma_real = maybe_diag(sigma['real']['real'])
-    sigma_categ = np.hstack([
+    sigma_categ = hstack([
         maybe_diag(sigma['categ'][c]['categ'][c]) for c in sigma['categ']
     ])
 
-    beta_vec = np.hstack([beta_real, beta_categ])
-    sigma_vec = np.hstack([sigma_real, sigma_categ])
+    beta_vec = hstack([beta_real, beta_categ])
+    sigma_vec = hstack([sigma_real, sigma_categ])
 
     return beta_vec, sigma_vec
 

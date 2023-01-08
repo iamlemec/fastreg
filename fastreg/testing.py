@@ -69,6 +69,9 @@ def dataset(
         df['Ep'] = np.exp(df['yhat'])
         df['p0'] = st.poisson(df['Ep0'])
         df['p'] = st.poisson(df['Ep'])
+        df['t'] = 1 + st.exponential(size=N)
+        df['pt0'] = st.poisson(df['Ep0']*df['t'])
+        df['pt'] = st.poisson(df['Ep']*df['t'])
 
     # zero-inflated poisson
     if 'zinf_poisson' in models:
