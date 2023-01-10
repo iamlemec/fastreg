@@ -17,7 +17,9 @@ VALUE = Drop.VALUE
 
 try:
     from .general import (
-        glm, logit, poisson, negbin, zinf_poisson, zinf_negbin, gols, zero_inflate
+        glm, logit, poisson, negbin, zinf_poisson, zinf_negbin, gols, zero_inflate,
+        losses, binary_loss, poisson_loss, negbin_loss, lstsq_loss, normal_loss,
+        maxlike, maxlike_panel, glm_model, rmsprop
     )
 except:
     pass

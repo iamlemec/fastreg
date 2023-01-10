@@ -174,10 +174,10 @@ def dict_popoff(d, s):
     else:
         return d, None
 
-def tree_fisher(vg_fun, params, loader):
+def tree_fisher(gv_fun, params, loader):
     # accumulate outer product
     fish = tree_batch_reduce(
-        lambda b: tree_outer(vg_fun(params, b)), loader
+        lambda b: tree_outer(gv_fun(params, b)), loader
     )
 
     # invert fisher matrix
@@ -185,10 +185,10 @@ def tree_fisher(vg_fun, params, loader):
 
     return sigma
 
-def diag_fisher(vg_fun, params, loader):
+def diag_fisher(gv_fun, params, loader):
     # compute hessian inverse by block
     A, B, C, d = tree_batch_reduce(
-        lambda b: tree_outer_flat(vg_fun(params, b)), loader
+        lambda b: tree_outer_flat(gv_fun(params, b)), loader
     )
     psig, hsig = block_inverse(A, B, C, d, inv=la.inv)
 
@@ -222,9 +222,13 @@ def flatten_output(beta, sigma):
 ## optimizers
 ##
 
-def rmsprop(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, eps=1e-7, disp=None):
+def rmsprop(
+    vg_fun, loader, params0, epochs=10, eta=0.001, gamma=0.9, eps=1e-6,
+    xtol=1e-3, ftol=1e-5, disp=None
+):
     # parameter info
     params = tree_map(np.array, params0)
+    avg_loss = -np.inf
 
     # track rms gradient
     grms = tree_map(np.zeros_like, params)
@@ -233,9 +237,10 @@ def rmsprop(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, eps=1e-7, d
     for ep in range(epochs):
         # epoch stats
         agg_loss, agg_batch = 0.0, 0
+        last_par, last_loss = params, avg_loss
 
         # iterate over batches
-        for b, batch in enumerate(loader):
+        for batch in loader:
             # compute gradients
             loss, grad = vg_fun(params, batch)
 
@@ -259,12 +264,24 @@ def rmsprop(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, eps=1e-7, d
             agg_loss += loss
             agg_batch += 1
 
-        # display stats
+        # compute stats
         avg_loss = agg_loss/agg_batch
+        par_diff = tree_reduce(
+            np.maximum, tree_map(lambda p1, p2: np.max(np.abs(p1-p2)), params, last_par)
+        )
+        loss_diff = np.abs(avg_loss-last_loss)
 
         # display output
         if disp is not None:
-            disp(ep, avg_loss, params)
+            disp(ep, avg_loss, par_diff, loss_diff, params)
+
+        # check converge
+        if par_diff < xtol and loss_diff < ftol:
+            break
+
+    # show final result
+    if disp is not None:
+        disp(ep, avg_loss, par_diff, loss_diff, params, final=True)
 
     return params
 
@@ -274,14 +291,15 @@ def rmsprop(vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.9, eps=1e-7, d
 
 # maximum likelihood using jax - this expects a mean log likelihood
 def maxlike(
-    model=None, params=None, data=None, stderr=False, optim=rmsprop, backend='gpu',
-    **kwargs
+    model=None, params=None, data=None, stderr=False, optim=rmsprop, batch_size=8192,
+    backend='cpu', **kwargs
 ):
     # get model gradients
     vg_fun = jax.jit(jax.value_and_grad(model), backend=backend)
 
     # simple non-batched loader
-    loader = OneLoader(data)
+    BatchLoader = OneLoader if batch_size is None else DataLoader
+    loader = BatchLoader(data)
 
     # maximize likelihood
     params1 = optim(vg_fun, loader, params, **kwargs)
@@ -293,7 +311,7 @@ def maxlike(
     h_fun = jax.jit(jax.hessian(model), backend=backend)
 
     # compute standard errors
-    hess = h_fun(params, data)
+    hess = tree_batch_reduce(lambda b: h_fun(params, b), loader)
     fish = tree_matfun(np.linalg.inv, hess, params)
     omega = tree_map(lambda x: -x, fish)
 
@@ -304,13 +322,14 @@ def maxlike(
 # a toplevel hdfe variable is treated special-like
 def maxlike_panel(
     model=None, params=None, data=None, vg_fun=None, stderr=True, optim=rmsprop,
-    batch_size=8192, batch_stderr=8192, backend='gpu', **kwargs
+    batch_size=8192, backend='cpu', **kwargs
 ):
     # compute gradient for optim
     vg_fun = jax.jit(jax.value_and_grad(model), backend=backend)
 
     # set up batching
-    loader = DataLoader(data, batch_size)
+    BatchLoader = OneLoader if batch_size is None else DataLoader
+    loader = BatchLoader(data, batch_size)
 
     # maximize likelihood
     params1 = optim(vg_fun, loader, params, **kwargs)
@@ -378,7 +397,7 @@ def glm(
     Kx = len(x_names)
 
     # choose number of epochs
-    epochs = max(1, 2_000_000 // N) if epochs is None else epochs
+    epochs = max(1, 50_000_000 // N) if epochs is None else epochs
     per = max(1, epochs // 5) if per is None else per
 
     # compile model if needed
@@ -386,15 +405,15 @@ def glm(
         model = glm_model(loss, hdfe=hdfe)
 
     # displayer
-    def disp0(e, l, p):
+    def disp0(e, l, x, f, p, final=False):
         real, categ = p['real'], p['categ']
         if hdfe is not None:
             categ = categ.copy()
             categ[hdfe] = p['hdfe']
         mcats = np.array([np.mean(c) for c in categ.values()])
-        if e % per == 0:
+        if e % per == 0 or final:
             μreal, μcats = np.mean(real), np.mean(mcats)
-            print(f'[{e:3d}] {l:.5f}, {μreal=:.5f}, {μcats=:.5f}')
+            print(f'[{e:3d}] {l:.5f} {x:.5f}, {f:.5f}, {μreal=:.5f}, {μcats=:.5f}')
     disp = disp0 if display else None
 
     # organize data and initial params
