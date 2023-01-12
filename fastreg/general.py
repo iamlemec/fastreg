@@ -1,5 +1,5 @@
 import pandas as pd
-from operator import and_
+from operator import and_, add
 
 import jax
 import jax.numpy as np
@@ -223,7 +223,7 @@ def flatten_output(beta, sigma):
 ##
 
 def rmsprop(
-    vg_fun, loader, params0, epochs=10, eta=0.001, gamma=0.9, eps=1e-6,
+    vg_fun, loader, params0, epochs=10, eta=0.001, gamma=0.9, eps=1e-7,
     xtol=1e-3, ftol=1e-5, disp=None
 ):
     # parameter info
@@ -237,6 +237,7 @@ def rmsprop(
     for ep in range(epochs):
         # epoch stats
         agg_loss, agg_batch = 0.0, 0
+        agg_grad = tree_map(np.zeros_like, params0)
         last_par, last_loss = params, avg_loss
 
         # iterate over batches
@@ -244,15 +245,16 @@ def rmsprop(
             # compute gradients
             loss, grad = vg_fun(params, batch)
 
+            # check for any nans
             lnan = np.isnan(loss)
             gnan = tree_reduce(
                 and_, tree_map(lambda g: np.isnan(g).any(), grad)
             )
-
             if lnan or gnan:
                 print('Encountered nans!')
                 return params, None
 
+            # implement next step
             grms = tree_map(
                 lambda r, g: gamma*r + (1-gamma)*g**2, grms, grad
             )
@@ -262,10 +264,13 @@ def rmsprop(
 
             # compute statistics
             agg_loss += loss
+            agg_grad = tree_map(add, agg_grad, grad)
             agg_batch += 1
 
         # compute stats
         avg_loss = agg_loss/agg_batch
+        avg_grad = tree_map(lambda x: x/agg_batch, agg_grad)
+        abs_grad = tree_reduce(np.maximum, tree_map(lambda x: np.max(np.abs(x)), avg_grad))
         par_diff = tree_reduce(
             np.maximum, tree_map(lambda p1, p2: np.max(np.abs(p1-p2)), params, last_par)
         )
@@ -273,7 +278,7 @@ def rmsprop(
 
         # display output
         if disp is not None:
-            disp(ep, avg_loss, par_diff, loss_diff, params)
+            disp(ep, avg_loss, abs_grad, par_diff, loss_diff, params)
 
         # check converge
         if par_diff < xtol and loss_diff < ftol:
@@ -281,7 +286,7 @@ def rmsprop(
 
     # show final result
     if disp is not None:
-        disp(ep, avg_loss, par_diff, loss_diff, params, final=True)
+        disp(ep, avg_loss, abs_grad, par_diff, loss_diff, params, final=True)
 
     return params
 
@@ -405,15 +410,15 @@ def glm(
         model = glm_model(loss, hdfe=hdfe)
 
     # displayer
-    def disp0(e, l, x, f, p, final=False):
+    def disp0(e, l, g, x, f, p, final=False):
         real, categ = p['real'], p['categ']
         if hdfe is not None:
             categ = categ.copy()
             categ[hdfe] = p['hdfe']
         mcats = np.array([np.mean(c) for c in categ.values()])
         if e % per == 0 or final:
-            μreal, μcats = np.mean(real), np.mean(mcats)
-            print(f'[{e:3d}] {l:.5f} {x:.5f}, {f:.5f}, {μreal=:.5f}, {μcats=:.5f}')
+            μR, μC = np.mean(real), np.mean(mcats)
+            print(f'[{e:3d}] ℓ={l:.5f}, g={g:.5f}, Δβ={x:.5f}, Δℓ={f:.5f}, μR={μR:.5f}, μC={μC:.5f}')
     disp = disp0 if display else None
 
     # organize data and initial params
