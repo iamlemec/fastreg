@@ -77,13 +77,20 @@ def zero_inflate(like0, clip_like=20.0, key='lpzero'):
 
 class DataLoader:
     def __init__(self, data, batch_size=None):
+        # robust input handling
         if type(data) is pd.DataFrame:
             data = data.to_dict('series')
         self.data = tree_map(
             lambda x: np.array(x) if type(x) is not np.ndarray else x, data
         )
-        shapes = [d.shape[0] for d in tree_leaves(self.data)]
-        self.data_size = shapes[0] # should all be the same size
+
+        # validate shapes
+        shapes = set([d.shape[0] for d in tree_leaves(self.data)])
+        if len(shapes) > 1:
+            raise Exception('All data series must have first dimension size')
+
+        # store for iteration
+        self.data_size, = shapes
         self.batch_size = batch_size
 
     def __call__(self, batch_size=None):
@@ -93,20 +100,27 @@ class DataLoader:
         yield from self.iterate()
 
     def iterate(self, batch_size=None):
+        # round off data size to batch_size multiple
         batch_size = batch_size if batch_size is not None else self.batch_size
         num_batches = max(1, self.data_size // batch_size)
         round_size = batch_size*num_batches
+
+        # yield successive tree batches
         for i in range(0, round_size, batch_size):
             yield tree_map(lambda d: d[i:i+batch_size], self.data)
 
+# ignore batch_size and use entire dataset
 class OneLoader:
     def __init__(self, data, batch_size=None):
         self.data = data
 
+    def __call__(self, batch_size=None):
+        yield from self.iterate()
+
     def __iter__(self):
         yield from self.iterate()
 
-    def iterate(self):
+    def iterate(self, batch_size=None):
         yield self.data
 
 ##
@@ -324,7 +338,7 @@ def maxlike(
 
 # maximum likelihood using jax - this expects a mean log likelihood
 # the assumes the data is batchable, which usually means panel-like
-# a toplevel hdfe variable is treated special-like
+# a toplevel hdfe variable is treated special-like in diag_fisher
 def maxlike_panel(
     model=None, params=None, data=None, vg_fun=None, stderr=True, optim=rmsprop,
     batch_size=8192, backend='cpu', **kwargs
@@ -355,20 +369,27 @@ def maxlike_panel(
     return params1, sigma
 
 # make a glm model with a particular loss
-def glm_model(loss, hdfe=None):
+def glm_model(loss, hdfe=None, offset=False):
     if type(loss) is str:
         loss = losses[loss]
 
-    # evaluator
+    # evaluator function
     def model(par, dat):
-        ydat, xdat, cdat = dat['ydat'], dat['xdat'], dat['cdat']
+        # load in data and params
+        ydat, xdat, cdat, odat = dat['ydat'], dat['xdat'], dat['cdat'], dat['odat']
         real, categ = par['real'], par['categ']
         if hdfe is not None:
             categ[hdfe] = par.pop('hdfe')
+
+        # evaluate linear predictor
         pred = xdat @ real
+        if offset:
+            pred += odat
         for i, c in enumerate(categ):
             cidx = cdat.T[i] # needed for vmap to work
             pred += np.where(cidx >= 0, categ[c][cidx], 0.0) # -1 means drop
+
+        # compute average likelihood
         like = loss(par, pred, ydat)
         return np.mean(like)
 
@@ -377,8 +398,8 @@ def glm_model(loss, hdfe=None):
 # default glm specification
 def glm(
     y=None, x=None, formula=None, hdfe=None, data=None, extra={}, model=None,
-    loss=None, extern=None, stderr=True, display=True, epochs=None, per=None,
-    output='table', **kwargs
+    loss=None, extern=None, stderr=True, offset=None, display=True, epochs=None,
+    per=None, output='table', **kwargs
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -390,9 +411,13 @@ def glm(
         hdfe = c_hdfe.name()
 
     # construct design matrices
-    y_vec, y_name, x_mat, x_names, c_mat, c_names = design_matrices(
-        y=y, x=x, data=data, method='ordinal', extern=extern, flatten=False
+    y_vec, y_name, x_mat, x_names, c_mat, c_names, valid = design_matrices(
+        y=y, x=x, data=data, method='ordinal', extern=extern, flatten=False, validate=True
     )
+
+    # get offset values (can't contain nans)
+    hasoff = offset is not None
+    o_vec = offset.eval(data)[0][valid, 0] if hasoff else None
 
     # accumulate all names
     c_names = {c.name(): ls for c, ls in c_names.items()}
@@ -407,7 +432,7 @@ def glm(
 
     # compile model if needed
     if model is None:
-        model = glm_model(loss, hdfe=hdfe)
+        model = glm_model(loss, hdfe=hdfe, offset=hasoff)
 
     # displayer
     def disp0(e, l, g, x, f, p, final=False):
@@ -422,7 +447,7 @@ def glm(
     disp = disp0 if display else None
 
     # organize data and initial params
-    dat = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat}
+    dat = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat, 'odat': o_vec}
     pcateg = {c: np.zeros(len(ls)) for c, ls in c_names.items()}
     params = {'real': np.zeros(Kx), 'categ': pcateg, **extra}
     if hdfe is not None:
