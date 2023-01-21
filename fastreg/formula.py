@@ -3,11 +3,11 @@
 ##
 
 import re
-import numpy as np
-import pandas as pd
-
 from functools import reduce
 from operator import add
+
+import numpy as np
+import pandas as pd
 
 from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg, Drop
 from .tools import (
@@ -491,7 +491,7 @@ class Formula(MetaFormula):
                 t.eval(data, method=method, extern=extern) for t in categ
             ])
             categ_value = hstack(categ_value)
-            categ_valid = all_valid(categ_valid)
+            categ_valid = all_valid(*categ_valid)
         else:
             categ_value, categ_valid, categ_label = None, None, []
 
@@ -505,7 +505,7 @@ class Formula(MetaFormula):
             ])
             reals_value = hstack(reals_value)
             reals_label = chainer(reals_label)
-            reals_valid = all_valid(reals_valid)
+            reals_valid = all_valid(*reals_valid)
         else:
             reals_value, reals_valid, reals_label = None, None, []
 

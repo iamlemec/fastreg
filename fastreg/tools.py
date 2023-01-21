@@ -2,12 +2,14 @@
 ## tools
 ##
 
+from operator import and_
+from itertools import chain, accumulate
+from functools import partial, reduce
+
 import numpy as np
 import pandas as pd
 import numpy.linalg as la
 import scipy.sparse as sp
-from itertools import chain, accumulate
-from functools import partial
 from pandas._libs.hashtable import SIZE_HINT_LIMIT
 from pandas.core.sorting import get_group_index
 
@@ -160,10 +162,10 @@ def valid_rows(x):
 
 # aggregate valid masks
 def all_valid(*mats):
+    mats = [x for x in mats if x is not None]
     if len(mats) == 0:
         return None
-    else:
-        return np.vstack([m for m in mats if m is not None]).all(axis=0)
+    return reduce(and_, mats)
 
 # list based cumsum
 def cumsum(x):

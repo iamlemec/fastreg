@@ -3,15 +3,16 @@
 ##
 
 import re
+from functools import reduce
+from operator import mul
+
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
-from functools import reduce
-from operator import mul, and_
 
 from .tools import (
     hstack, multiply, ensure_dense, group_sums, group_means, chainer,
-    block_inverse, valid_rows
+    block_inverse, valid_rows, all_valid
 )
 from .formula import (
     category_indices, design_matrices, parse_tuple, parse_list, ensure_formula,
@@ -38,7 +39,7 @@ def ols(
     if absorb is not None:
         a_trm = parse_list(absorb, convert=Categ)
         a_mat = a_trm.raw(data, extern=extern)
-        valid &= reduce(and_, (valid_rows(a) for a in a_mat))
+        valid &= all_valid(*[valid_rows(a) for a in a_mat])
         x -= a_trm
         if cluster is None:
             cluster = reduce(mul, a_trm)
