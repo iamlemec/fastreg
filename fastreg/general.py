@@ -12,7 +12,9 @@ from jax.numpy import exp
 from .formula import (
     design_matrices, parse_tuple, ensure_formula, Categ
 )
-from .tools import block_inverse, chainer, maybe_diag, atleast_2d, hstack
+from .tools import (
+    block_inverse, chainer, maybe_diag, atleast_2d, hstack, valid_rows, all_valid
+)
 from .summary import param_table
 
 ##
@@ -47,12 +49,12 @@ def normal_loss(p, yh, y):
     return like
 
 losses = {
-    'logit': lambda p, yh, y: binary_loss(logistic(yh), y),
-    'poisson': lambda p, yh, y: poisson_loss(exp(yh), y),
-    'negbin': lambda p, yh, y: negbin_loss(exp(p['lr']), exp(yh), y),
-    'normal': lambda p, yh, y: normal_loss(p, yh, y),
-    'lognorm': lambda p, yh, y: normal_loss(p, yh, log(y)),
-    'lstsq': lambda p, yh, y: lstsq_loss(yh, y),
+    'logit': lambda p, d, yh, y: binary_loss(logistic(yh), y),
+    'poisson': lambda p, d, yh, y: poisson_loss(exp(yh), y),
+    'negbin': lambda p, d, yh, y: negbin_loss(exp(p['lr']), exp(yh), y),
+    'normal': lambda p, d, yh, y: normal_loss(p, yh, y),
+    'lognorm': lambda p, d, yh, y: normal_loss(p, yh, log(y)),
+    'lstsq': lambda p, d, yh, y: lstsq_loss(yh, y),
 }
 
 def ensure_loss(s):
@@ -61,14 +63,21 @@ def ensure_loss(s):
     else:
         return s
 
-# modifiers
+# loss function modifiers
 def zero_inflate(like0, clip_like=20.0, key='lpzero'):
     like0 = ensure_loss(like0)
-    def like(p, yh, y):
+    def like(p, d, yh, y):
         pzero = logistic(p[key])
-        plike = np.clip(like0(p, yh, y), a_max=clip_like)
+        plike = np.clip(like0(p, d, yh, y), a_max=clip_like)
         llike = np.where(y == 0, log(pzero), log(1-pzero) + plike)
         return llike
+    return like
+
+def add_offset(like0, key='offset'):
+    like0 = ensure_loss(like0)
+    def like(p, d, yh, y):
+        yh1 = d[key] + yh
+        return like0(p, d, yh1, y)
     return like
 
 ##
@@ -80,6 +89,8 @@ class DataLoader:
         # robust input handling
         if type(data) is pd.DataFrame:
             data = data.to_dict('series')
+
+        # note that tree_map seems to drop None valued leaves
         self.data = tree_map(
             lambda x: np.array(x) if type(x) is not np.ndarray else x, data
         )
@@ -369,37 +380,35 @@ def maxlike_panel(
     return params1, sigma
 
 # make a glm model with a particular loss
-def glm_model(loss, hdfe=None, offset=False):
+def glm_model(loss, hdfe=None):
     if type(loss) is str:
         loss = losses[loss]
 
     # evaluator function
     def model(par, dat):
         # load in data and params
-        ydat, xdat, cdat, odat = dat['ydat'], dat['xdat'], dat['cdat'], dat['odat']
+        ydat, xdat, cdat = dat['ydat'], dat['xdat'], dat['cdat']
         real, categ = par['real'], par['categ']
         if hdfe is not None:
             categ[hdfe] = par.pop('hdfe')
 
         # evaluate linear predictor
         pred = xdat @ real
-        if offset:
-            pred += odat
         for i, c in enumerate(categ):
             cidx = cdat.T[i] # needed for vmap to work
             pred += np.where(cidx >= 0, categ[c][cidx], 0.0) # -1 means drop
 
         # compute average likelihood
-        like = loss(par, pred, ydat)
+        like = loss(par, dat, pred, ydat)
         return np.mean(like)
 
     return model
 
 # default glm specification
 def glm(
-    y=None, x=None, formula=None, hdfe=None, data=None, extra={}, model=None,
-    loss=None, extern=None, stderr=True, offset=None, display=True, epochs=None,
-    per=None, output='table', **kwargs
+    y=None, x=None, formula=None, hdfe=None, data=None, extra={}, raw={},
+    offset=None, model=None, loss=None, extern=None, stderr=True, display=True,
+    epochs=None, per=None, output='table', **kwargs
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -410,14 +419,20 @@ def glm(
         x += c_hdfe
         hdfe = c_hdfe.name()
 
+    # add in raw data with offset special case
+    if offset is not None:
+        raw = {**raw, 'offset': offset}
+    r_vec = {k: v.raw(data, extern=extern) for k, v in raw.items()}
+    r_val = all_valid(*[valid_rows(v) for v in r_vec.values()])
+
     # construct design matrices
     y_vec, y_name, x_mat, x_names, c_mat, c_names, valid = design_matrices(
-        y=y, x=x, data=data, method='ordinal', extern=extern, flatten=False, validate=True
+        y=y, x=x, data=data, method='ordinal', extern=extern, flatten=False,
+        validate=True, valid0=r_val
     )
 
-    # get offset values (can't contain nans)
-    hasoff = offset is not None
-    o_vec = offset.eval(data)[0][valid, 0] if hasoff else None
+    # drop invalid raw rows
+    r_vec = {k: v[valid] for k, v in r_vec.items()}
 
     # accumulate all names
     c_names = {c.name(): ls for c, ls in c_names.items()}
@@ -430,9 +445,11 @@ def glm(
     epochs = max(1, 50_000_000 // N) if epochs is None else epochs
     per = max(1, epochs // 5) if per is None else per
 
-    # compile model if needed
+    # create model if needed
     if model is None:
-        model = glm_model(loss, hdfe=hdfe, offset=hasoff)
+        if offset is not None:
+            loss = add_offset(loss, key='offset')
+        model = glm_model(loss, hdfe=hdfe)
 
     # displayer
     def disp0(e, l, g, x, f, p, final=False):
@@ -447,7 +464,7 @@ def glm(
     disp = disp0 if display else None
 
     # organize data and initial params
-    dat = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat, 'odat': o_vec}
+    dat = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat, **r_vec}
     pcateg = {c: np.zeros(len(ls)) for c, ls in c_names.items()}
     params = {'real': np.zeros(Kx), 'categ': pcateg, **extra}
     if hdfe is not None:

@@ -419,9 +419,10 @@ class Term(MetaTerm):
 
 class Formula(MetaFormula):
     def __init__(self, *terms):
+        # order preserving unique
         self._terms = tuple(dict.fromkeys(
             t if isinstance(t, MetaTerm) else Term(t) for t in terms
-        )) # order preserving unique
+        ))
 
     def __eq__(self, other):
         self_set = {frozenset(t) for t in self}
@@ -490,7 +491,7 @@ class Formula(MetaFormula):
                 t.eval(data, method=method, extern=extern) for t in categ
             ])
             categ_value = hstack(categ_value)
-            categ_valid = np.vstack(categ_valid).all(axis=0)
+            categ_valid = all_valid(categ_valid)
         else:
             categ_value, categ_valid, categ_label = None, None, []
 
@@ -504,7 +505,7 @@ class Formula(MetaFormula):
             ])
             reals_value = hstack(reals_value)
             reals_label = chainer(reals_label)
-            reals_valid = np.vstack(reals_valid).all(axis=0)
+            reals_valid = all_valid(reals_valid)
         else:
             reals_value, reals_valid, reals_label = None, None, []
 

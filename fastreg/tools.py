@@ -158,8 +158,12 @@ def valid_rows(x):
         print(f'valid_rows: unsupported format "{fmt}"')
     return ~null
 
+# aggregate valid masks
 def all_valid(*mats):
-    return np.vstack([m for m in mats if m is not None]).all(axis=0)
+    if len(mats) == 0:
+        return None
+    else:
+        return np.vstack([m for m in mats if m is not None]).all(axis=0)
 
 # list based cumsum
 def cumsum(x):
