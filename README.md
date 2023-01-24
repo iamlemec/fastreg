@@ -234,12 +234,15 @@ Other estimators use syntax very similar to that of `ols`. This includes `glm` i
 ```python
 fastreg.glm(
     y=None, x=None, formula=None, data=None, hdfe=None, loss=None, model=None,
-    extra={}, epochs=None, display=True, per=None, stderr=True, output='table'
+    extra={}, raw={}, offset=None, epochs=None, display=True, per=None, stderr=True,
+    output='table'
 )
 ```
-- **loss**: the loss (log likelihood) function to use for optimization, can be one of `'logit'`, `'poisson'`, `'negbin'`, `'normal'`, `'lognorm'`, `'lstsq'`, or a custom function that accepts `(params, predict, data)`
+- **loss**: the loss (log likelihood) function to use for optimization, can be one of `'logit'`, `'poisson'`, `'negbin'`, `'normal'`, `'lognorm'`, `'lstsq'`, or a custom function that accepts `(params, data, yhat, y)`
 - **model**: in lieu of a loss function, one can specify a model function mapping from `(params, data)` to an average log likelihood
 - **extra**: a `dict` of extra parameter names mapping to initial values that can be accessed by the `loss` function
+- **raw**: a `dict` of extra `Term` specifications that are evaluated and passed to the `loss` function as part of `data`
+- **offset**: a `Term` to evaluate and add to the linear predictor (for instance, `R('log(t)')`)
 - **epochs**: how many full iterations over the dataset to do during optimization
 - **display**: whether to display updates on objective and parameter values during optimization
 - **per**: how often to display updates during optimization
