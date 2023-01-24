@@ -380,15 +380,19 @@ class Term(MetaTerm):
     def raw(self, data, extern=None):
         return np.vstack([f.raw(data, extern=extern) for f in self]).T
 
-    def eval(self, data, method='sparse', extern=None):
+    def eval(self, data, method='sparse', extern=None, squeeze=False):
         # zero length is identity
         if len(self) == 0:
             N = len(data)
-            return np.ones((N, 1)), np.ones(N, dtype=bool), ['I']
+            return np.ones((N, 1)), ['I'], np.ones(N, dtype=bool)
 
         # separate pure real and categorical
         categ, reals = categorize(is_categorical, self)
         categ, reals = Term(*categ), Term(*reals)
+
+        # error with mixed types + method='ordinal'
+        if method == 'ordinal' and len(categ) > 0 and len(reals) > 0:
+            raise ValueError('Cannot use method="ordinal" with mixed factor types')
 
         # handle categorical
         if len(categ) > 0:
@@ -407,15 +411,21 @@ class Term(MetaTerm):
 
         # combine results
         if len(categ) == 0:
-            return reals_value, reals_valid, [reals_label]
+            if squeeze:
+                return reals_value.squeeze(), reals_label, reals_valid
+            else:
+                return reals_value, [reals_label], reals_valid
         elif len(reals) == 0:
-            return categ_value, categ_valid, categ_label
+            if squeeze:
+                return categ_value.squeeze(), categ_label, categ_valid
+            else:
+                return categ_value, categ_label, categ_valid
         else:
             # filling nulls with 0 keeps sparse the same
             term_value = categ_value.multiply(fillna(reals_value, v=0))
             term_label = [f'({l})*{reals_label}' for l in categ_label]
             term_valid = categ_valid & reals_valid
-            return term_value, term_valid, term_label
+            return term_value, term_label, term_valid
 
 class Formula(MetaFormula):
     def __init__(self, *terms):
@@ -481,39 +491,45 @@ class Formula(MetaFormula):
     def raw(self, data, extern=None):
         return [t.raw(data, extern=extern) for t in self]
 
-    def eval(self, data, method='sparse', extern=None):
+    def eval(self, data, method='sparse', extern=None, flatten=False):
         # split by all real or not
         categ, reals = categorize(is_categorical, self)
 
         # handle categories
         if len(categ) > 0:
-            categ_value, categ_valid, categ_label = zip(*[
+            categ_value, categ_label, categ_valid = zip(*[
                 t.eval(data, method=method, extern=extern) for t in categ
             ])
             categ_value = hstack(categ_value)
             categ_valid = all_valid(*categ_valid)
         else:
-            categ_value, categ_valid, categ_label = None, None, []
+            categ_value, categ_label, categ_valid = None, [], None
 
         # combine labels
         categ_label = {t: ls for t, ls in zip(categ, categ_label)}
 
         # handle reals
         if len(reals) > 0:
-            reals_value, reals_valid, reals_label = zip(*[
+            reals_value, reals_label, reals_valid = zip(*[
                 t.eval(data, extern=extern) for t in reals
             ])
             reals_value = hstack(reals_value)
             reals_label = chainer(reals_label)
             reals_valid = all_valid(*reals_valid)
         else:
-            reals_value, reals_valid, reals_label = None, None, []
+            reals_value, reals_label, reals_valid = None, [], None
 
         # return separately
-        return (
-            reals_value, reals_valid, reals_label,
-            categ_value, categ_valid, categ_label
-        )
+        if flatten:
+            values = hstack([reals_value, categ_value])
+            labels = reals_label + chainer(categ_label.values())
+            valids = all_valid(reals_valid, categ_valid)
+            return values, labels, valids
+        else:
+            return (
+                reals_value, reals_label, reals_valid,
+                categ_value, categ_label, categ_valid
+            )
 
 ##
 ## column types
@@ -719,7 +735,7 @@ def design_matrix(
     _, x = ensure_formula(x=x, formula=formula)
 
     # evaluate x variables
-    x_mat, x_val, x_names, c_mat, c_val, c_labels = x.eval(
+    x_mat, x_names, x_val, c_mat, c_labels, c_val = x.eval(
         data, method=method, extern=extern
     )
 

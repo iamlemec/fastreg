@@ -7,7 +7,6 @@ from functools import reduce
 from operator import mul
 
 import numpy as np
-import pandas as pd
 import scipy.sparse as sp
 
 from .tools import (

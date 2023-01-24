@@ -10,7 +10,7 @@ from jax.lax import logistic
 from jax.numpy import exp
 
 from .formula import (
-    design_matrices, parse_tuple, ensure_formula, Categ
+    design_matrices, parse_tuple, ensure_formula, parse_item, Categ
 )
 from .tools import (
     block_inverse, chainer, maybe_diag, atleast_2d, hstack, valid_rows, all_valid
@@ -422,7 +422,7 @@ def glm(
     # add in raw data with offset special case
     if offset is not None:
         raw = {**raw, 'offset': offset}
-    r_vec = {k: v.raw(data, extern=extern) for k, v in raw.items()}
+    r_vec = {k: parse_item(v).raw(data, extern=extern) for k, v in raw.items()}
     r_val = all_valid(*[valid_rows(v) for v in r_vec.values()])
 
     # construct design matrices

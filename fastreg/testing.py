@@ -69,12 +69,15 @@ def dataset(
         df['Ep'] = np.exp(df['yhat'])
         df['p0'] = st.poisson(df['Ep0'])
         df['p'] = st.poisson(df['Ep'])
+
+    # offset poisson
+    if 'poisson_offset' in models:
         df['t'] = 1 + st.exponential(size=N)
         df['pt0'] = st.poisson(df['Ep0']*df['t'])
         df['pt'] = st.poisson(df['Ep']*df['t'])
 
     # zero-inflated poisson
-    if 'zinf_poisson' in models:
+    if 'poisson_zinf' in models:
         df['pz0'] = np.where(st.rand(N) < params['pz'], 0, df['p0'])
         df['pz'] = np.where(st.rand(N) < params['pz'], 0, df['p'])
 
@@ -84,10 +87,11 @@ def dataset(
         df['nb'] = rand_negbin(df['Ep'], params['alpha'], state=st)
 
     # zero-inflated poisson
-    if 'zinf_negbin' in models:
+    if 'negbin_zinf' in models:
         df['nbz0'] = np.where(st.rand(N) < params['pz'], 0, df['nb0'])
         df['nbz'] = np.where(st.rand(N) < params['pz'], 0, df['nb'])
 
+    # map id1 to letters
     if letter and K1 is not None:
         df['id1'] = df['id1'].map(lambda x: chr(65+x))
 
