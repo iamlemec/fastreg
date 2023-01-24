@@ -19,11 +19,12 @@ from .tools import (
 ## tools
 ##
 
-def is_categorical(ft):
+def is_categorical(ft, strict=False):
     if isinstance(ft, MetaFactor):
         return isinstance(ft, MetaCateg)
     elif isinstance(ft, MetaTerm):
-        return any(is_categorical(t) for t in ft)
+        agg = all if strict else any
+        return agg([is_categorical(t) for t in ft])
 
 def ensure_tuple(t):
     if type(t) is tuple:
