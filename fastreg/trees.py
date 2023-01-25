@@ -38,7 +38,7 @@ def design_tree(
 ):
     # use eval to get data, labels, valid
     def eval_item(term):
-        args = {'flatten': True} if isinstance(term, MetaFormula) else {'squeeze': True}
+        args = {} if isinstance(term, MetaFormula) else {'squeeze': True}
         return term.eval(data, extern=extern, method=method, **args)
     info = tree_map(eval_item, tree)
 
@@ -52,10 +52,9 @@ def design_tree(
     if dropna:
         values = tree_map(lambda x: x[valid], values)
 
-    # prune categories for pure categoricals
+    # prune categories for categorical components
     if prune:
         def prune_cats(i, v, l):
-            print(is_categorical(i))
             if is_categorical(i, strict=True):
                 return prune_categories(v, l, method=method, warn=warn)
             else:
@@ -63,6 +62,8 @@ def design_tree(
         pruned = tree_map(prune_cats, tree, values, labels)
         struct_inner2 = jax.tree_util.tree_structure((0, 0))
         values, labels = tree_transpose(struct_outer, struct_inner2, pruned)
+
+    # flatten any formulas
 
     # return requested info
     if validate:
