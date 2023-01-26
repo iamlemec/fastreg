@@ -32,46 +32,35 @@ def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
     subtrees = map(partial(tree_unflatten, outer_treedef), transposed_lol)
     return tree_unflatten(inner_treedef, subtrees)
 
-# tree of formulas -> tree of values and tree of labels
+# tree of terms -> tree of values and tree of labels
 def design_tree(
     tree, data=None, extern=None, method='ordinal', dropna=True, validate=False,
     valid0=None, prune=True, flatten=False, warn=False
 ):
     # use eval to get data, labels, valid
-    def eval_item(term):
-        args = {} if isinstance(term, MetaFormula) else {'squeeze': True}
-        return term.eval(data, extern=extern, method=method, **args)
-    info = tree_map(eval_item, tree)
+    info = tree_map(
+        lambda x: x.eval(data, extern=extern, method=method, squeeze=True), tree
+    )
 
     # unpack into separate trees (hacky)
     struct_outer = jax.tree_util.tree_structure(tree)
     struct_inner3 = jax.tree_util.tree_structure((0, 0, 0))
     values, labels, valids = tree_transpose(struct_outer, struct_inner3, info)
-    valid = all_valid(valid0, tree_reduce(and_, valids))
 
-    # dropna, prune categories, and flatten
-    def process(i, v, l):
-        if type(v) is tuple and len(v) == 2:
-            (vx, vc), (lx, lc) = v, l
-        elif is_categorical(i):
-            vx, vc = None, v
-            lx, lc = None, l
-        else:
-            vx, vc = v, None
-            lx, lc = l, None
-        if dropna:
-            vx, vc = drop_invalid(valid, vx, vc, warn=False)
-        if prune and vc is not None:
-            vc, vl = prune_categories(vc, lc, method=method, warn=False)
-        if flatten:
-            v = hstack([vx, vc])
-            l = lx + chainer(lc.values())
-        else:
-            v, l = (vx, vc), (lx, lc)
-        return v, l
-    pruned = tree_map(process, tree, values, labels)
-    struct_inner2 = jax.tree_util.tree_structure((0, 0))
-    values, labels = tree_transpose(struct_outer, struct_inner2, pruned)
+    # drop invalid rows
+    valid = all_valid(valid0, tree_reduce(and_, valids))
+    if dropna:
+        values = tree_map(lambda x: x[valid], values)
+
+    # prune categories
+    if prune:
+        prune_cats = lambda v, l: prune_categories(v, l, method=method, warn=False)
+        pruned = tree_map(
+            lambda i, v, l: prune_cats(v, {i: l}) if is_categorical(i) else (v, l),
+            tree, values, labels
+        )
+        struct_inner2 = jax.tree_util.tree_structure((0, 0))
+        values, labels = tree_transpose(struct_outer, struct_inner2, pruned)
 
     # return requested info
     if validate:

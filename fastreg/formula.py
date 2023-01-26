@@ -138,7 +138,7 @@ def encode_categorical(vals, names, method='sparse', drop=Drop.FIRST):
     return cats_enc, cats_lab, valid
 
 # subset data allowing for missing chunks
-def drop_invalid(valid, *mats, warn=None, name='data'):
+def drop_invalid(valid, *mats, warn=False, name='data'):
     V, N = np.sum(valid), len(valid)
     if V == 0:
         raise Exception('all rows contain null data')
