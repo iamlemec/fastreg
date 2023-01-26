@@ -521,16 +521,13 @@ class Formula(MetaFormula):
             reals_value, reals_label, reals_valid = None, [], None
 
         # return separately
+        valids = all_valid(reals_valid, categ_valid)
         if flatten:
             values = hstack([reals_value, categ_value])
             labels = reals_label + chainer(categ_label.values())
-            valids = all_valid(reals_valid, categ_valid)
             return values, labels, valids
         else:
-            return (
-                reals_value, reals_label, reals_valid,
-                categ_value, categ_label, categ_valid
-            )
+            return (reals_value, categ_value), (reals_label, categ_label), valids
 
 ##
 ## column types
@@ -736,32 +733,26 @@ def design_matrix(
     _, x = ensure_formula(x=x, formula=formula)
 
     # evaluate x variables
-    x_mat, x_names, x_val, c_mat, c_labels, c_val = x.eval(
-        data, method=method, extern=extern
-    )
+    (x_vec, c_vec), (x_lab, c_lab), val = x.eval(data, method=method, extern=extern)
 
     # aggregate valid info for data
-    valid = all_valid(valid0, x_val, c_val)
+    valid = all_valid(valid0, val)
 
     # drop null values if requested
     if dropna:
-        x_mat, c_mat = drop_invalid(
-            valid, x_mat, c_mat, warn=warn, name='x'
-        )
+        x_vec, c_vec = drop_invalid(valid, x_vec, c_vec, warn=warn, name='x')
 
     # prune empty categories if requested
-    if prune and c_mat is not None:
-        c_mat, c_labels = prune_categories(
-            c_mat, c_labels, method=method, warn=warn
-        )
+    if prune and c_vec is not None:
+        c_vec, c_lab = prune_categories(c_vec, c_lab, method=method, warn=warn)
 
     # combine real and categorical?
     if flatten:
-        f_mat = hstack([x_mat, c_mat])
-        f_names = x_names + chainer(c_labels.values())
-        ret = f_mat, f_names
+        vec = hstack([x_vec, c_vec])
+        lab = x_lab + chainer(c_lab.values())
+        ret = vec, lab
     else:
-        ret = x_mat, x_names, c_mat, c_labels
+        ret = (x_vec, c_vec), (x_lab, c_lab)
 
     # return valid mask?
     if validate:
@@ -779,12 +770,12 @@ def design_matrices(
         raise Exception('Use design_matrix for formulas without an LHS')
 
     # get y data
-    y_vec, y_name = y.raw(data, extern=extern), y.name()
+    y_vec, y_lab = y.raw(data, extern=extern), y.name()
     y_val = valid_rows(y_vec)
 
     # get valid x data
     x_val0 = all_valid(valid0, y_val)
-    *x_ret, valid = design_matrix(
+    x_vec, x_lab, valid = design_matrix(
         x=x, data=data, dropna=dropna, extern=extern, valid0=x_val0, warn=warn,
         validate=True, **kwargs
     )
@@ -794,7 +785,7 @@ def design_matrices(
         y_vec, = drop_invalid(valid, y_vec, warn=warn, name='y')
 
     # return combined data
-    ret = y_vec, y_name, *x_ret
+    ret = y_vec, y_lab, x_vec, x_lab
     if validate:
         return *ret, valid
     else:

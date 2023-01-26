@@ -54,7 +54,7 @@ def ols(
         valid &= valid_rows(s_mat)
 
     # make design matrices
-    y_vec, y_name, x0_mat, x0_names, c_mat, c_names0, valid = design_matrices(
+    y_vec, y_name, (x0_mat, c_mat), (x0_names, c_names0), valid = design_matrices(
         y=y, x=x, formula=formula, data=data, valid0=valid, extern=extern, warn=warn,
         flatten=False, validate=True
     )

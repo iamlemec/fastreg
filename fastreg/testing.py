@@ -60,8 +60,8 @@ def dataset(
     if 'logit' in models:
         df['Eb0'] = 1/(1+np.exp(-df['yhat0']))
         df['Eb'] = 1/(1+np.exp(-df['yhat']))
-        df['b0'] = (st.randn(N) < df['Eb0']).astype(np.int)
-        df['b'] = (st.randn(N) < df['Eb']).astype(np.int)
+        df['b0'] = (st.rand(N) < df['Eb0']).astype(np.int)
+        df['b'] = (st.rand(N) < df['Eb']).astype(np.int)
 
     # poisson
     if 'poisson' in models:
@@ -96,21 +96,6 @@ def dataset(
         df['id1'] = df['id1'].map(lambda x: chr(65+x))
 
     return df
-
-def dataset_compare(N=10_000_000, K=100):
-    K1, K2 = N // K, K
-
-    id1 = np.random.randint(K1, size=N)
-    id2 = np.random.randint(K2, size=N)
-
-    x1 = 5*np.cos(id1) + 5*np.sin(id2) + np.random.randn(N)
-    x2 = np.cos(id1) + np.sin(id2) + np.random.randn(N)
-
-    y= 3*x1 + 5*x2 + np.cos(id1) + np.cos(id2)**2 + np.random.randn(N)
-
-    return pd.DataFrame({
-        'y': y, 'x1': x1, 'x2': x2, 'id1': id1,  'id2': id2
-    })
 
 def plot_coeff(beta, params=params0):
     import matplotlib.pyplot as plt

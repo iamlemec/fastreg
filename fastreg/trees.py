@@ -10,7 +10,8 @@ import jax
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map, tree_reduce
 
 from .meta import MetaFormula
-from .formula import valid_rows, all_valid, is_categorical, prune_categories
+from .tools import hstack, chainer
+from .formula import valid_rows, all_valid, drop_invalid, is_categorical, prune_categories
 
 # modified from stock jax version to allow variable inner shapes
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
@@ -34,7 +35,7 @@ def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
 # tree of formulas -> tree of values and tree of labels
 def design_tree(
     tree, data=None, extern=None, method='ordinal', dropna=True, validate=False,
-    valid0=None, prune=True, warn=False
+    valid0=None, prune=True, flatten=False, warn=False
 ):
     # use eval to get data, labels, valid
     def eval_item(term):
@@ -48,22 +49,29 @@ def design_tree(
     values, labels, valids = tree_transpose(struct_outer, struct_inner3, info)
     valid = all_valid(valid0, tree_reduce(and_, valids))
 
-    # drop data and prune cats if requested
-    if dropna:
-        values = tree_map(lambda x: x[valid], values)
-
-    # prune categories for categorical components
-    if prune:
-        def prune_cats(i, v, l):
-            if is_categorical(i, strict=True):
-                return prune_categories(v, l, method=method, warn=warn)
-            else:
-                return v, l
-        pruned = tree_map(prune_cats, tree, values, labels)
-        struct_inner2 = jax.tree_util.tree_structure((0, 0))
-        values, labels = tree_transpose(struct_outer, struct_inner2, pruned)
-
-    # flatten any formulas
+    # dropna, prune categories, and flatten
+    def process(i, v, l):
+        if type(v) is tuple and len(v) == 2:
+            (vx, vc), (lx, lc) = v, l
+        elif is_categorical(i):
+            vx, vc = None, v
+            lx, lc = None, l
+        else:
+            vx, vc = v, None
+            lx, lc = l, None
+        if dropna:
+            vx, vc = drop_invalid(valid, vx, vc, warn=False)
+        if prune and vc is not None:
+            vc, vl = prune_categories(vc, lc, method=method, warn=False)
+        if flatten:
+            v = hstack([vx, vc])
+            l = lx + chainer(lc.values())
+        else:
+            v, l = (vx, vc), (lx, lc)
+        return v, l
+    pruned = tree_map(process, tree, values, labels)
+    struct_inner2 = jax.tree_util.tree_structure((0, 0))
+    values, labels = tree_transpose(struct_outer, struct_inner2, pruned)
 
     # return requested info
     if validate:

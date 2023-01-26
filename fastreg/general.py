@@ -426,7 +426,7 @@ def glm(
     r_val = all_valid(*[valid_rows(v) for v in r_vec.values()])
 
     # construct design matrices
-    y_vec, y_name, x_mat, x_names, c_mat, c_names, valid = design_matrices(
+    y_vec, y_name, (x_mat, c_mat), (x_names, c_names), valid = design_matrices(
         y=y, x=x, data=data, method='ordinal', extern=extern, flatten=False,
         validate=True, valid0=r_val
     )
