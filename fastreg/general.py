@@ -500,7 +500,7 @@ def poisson(y=None, x=None, data=None, **kwargs):
     return glm(y=y, x=x, data=data, loss='poisson', **kwargs)
 
 # zero inflated poisson regression
-def zinf_poisson(y=None, x=None, data=None, clip_like=20.0, **kwargs):
+def poisson_zinf(y=None, x=None, data=None, clip_like=20.0, **kwargs):
     loss = zero_inflate(losses['poisson'], clip_like=clip_like)
     extra = {'lpzero': 0.0}
     return glm(y=y, x=x, data=data, loss=loss, extra=extra, **kwargs)
@@ -511,7 +511,7 @@ def negbin(y=None, x=None, data=None, **kwargs):
     return glm(y=y, x=x, data=data, loss='negbin', extra=extra, **kwargs)
 
 # zero inflated poisson regression
-def zinf_negbin(y=None, x=None, data=None, clip_like=20.0, **kwargs):
+def negbin_zinf(y=None, x=None, data=None, clip_like=20.0, **kwargs):
     loss = zero_inflate(losses['negbin'], clip_like=clip_like)
     extra = {'lpzero': 0.0, 'lr': 0.0}
     return glm(y=y, x=x, data=data, loss=loss, extra=extra, **kwargs)

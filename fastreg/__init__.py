@@ -1,6 +1,7 @@
 from . import tools
 from . import formula
 from . import linear
+from . import general
 from . import testing
 
 from .tools import (
@@ -26,7 +27,7 @@ except:
 
 if HAS_JAX:
     from .general import (
-        glm, logit, poisson, negbin, zinf_poisson, zinf_negbin, gols,
+        glm, logit, poisson, negbin, poisson_zinf, negbin_zinf, gols,
         zero_inflate, add_offset, losses, binary_loss, poisson_loss,
         negbin_loss, lstsq_loss, normal_loss, maxlike, maxlike_panel,
         glm_model, rmsprop
