@@ -68,9 +68,10 @@ def zero_inflate(like0, clip_like=20.0, key='lpzero'):
     like0 = ensure_loss(like0)
     def like(p, d, yh, y):
         pzero = logistic(p[key])
-        plike = np.clip(like0(p, d, yh, y), a_max=clip_like)
-        llike = np.where(y == 0, log(pzero), log(1-pzero) + plike)
-        return llike
+        blike = np.clip(like0(p, d, yh, y), a_max=clip_like)
+        zlike = log(pzero + (1-pzero)*exp(blike))
+        plike = log(1-pzero) + blike
+        return np.where(y == 0, zlike, plike)
     return like
 
 def add_offset(like0, key='offset'):
