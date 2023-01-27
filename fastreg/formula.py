@@ -770,7 +770,8 @@ def design_matrices(
         raise Exception('Use design_matrix for formulas without an LHS')
 
     # get y data
-    y_vec, y_lab = y.raw(data, extern=extern), y.name()
+    y_vec = y.raw(data, extern=extern)
+    y_lab = y.name()
     y_val = valid_rows(y_vec)
 
     # get valid x data
