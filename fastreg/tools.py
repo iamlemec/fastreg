@@ -38,11 +38,13 @@ def maybe_diag(x):
     else:
         return x.diagonal()
 
-# handles empty data
+# allows None's and handles empty data
 def vstack(v, format='csr'):
     v = [x for x in v if x is not None]
     if len(v) == 0:
         return None
+    elif len(v) == 1:
+        return v[0]
     elif any([sp.issparse(x) for x in v]):
         return sp.vstack(v, format=format)
     else:
@@ -53,10 +55,24 @@ def hstack(v, format='csr'):
     v = [x for x in v if x is not None]
     if len(v) == 0:
         return None
+    elif len(v) == 1:
+        return v[0]
     elif any([sp.issparse(x) for x in v]):
         return sp.hstack(v, format=format)
     else:
         return np.hstack(v)
+
+# allows None's and handles empty data
+def vstack(v, format='csr'):
+    v = [x for x in v if x is not None]
+    if len(v) == 0:
+        return None
+    elif len(v) == 1:
+        return v[0]
+    elif any([sp.issparse(x) for x in v]):
+        return sp.vstack(v, format=format)
+    else:
+        return np.vstack(v)
 
 def get_dtype(*v):
     tarr = [x.dtype for x in v if hasattr(x, 'dtype')]

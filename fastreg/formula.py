@@ -9,7 +9,7 @@ from operator import add
 import numpy as np
 import pandas as pd
 
-from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg, Drop
+from .meta import MetaFactor, MetaTerm, MetaFormula, MetaReal, MetaCateg, Drop, Column
 from .tools import (
     categorize, hstack, chainer, decorator, func_disp, valid_rows, split_size,
     atleast_2d, fillna, all_valid, splice, factorize_2d, onehot_encode
@@ -19,12 +19,14 @@ from .tools import (
 ## tools
 ##
 
-def is_categorical(ft, strict=False):
-    if isinstance(ft, MetaFactor):
-        return isinstance(ft, MetaCateg)
-    elif isinstance(ft, MetaTerm):
-        agg = all if strict else any
-        return agg([is_categorical(t) for t in ft])
+def is_categorical(x, strict=False):
+    agg = all if strict else any
+    if isinstance(x, MetaFactor):
+        return isinstance(x, MetaCateg)
+    elif isinstance(x, MetaTerm):
+        return agg([is_categorical(f) for f in x])
+    elif isinstance(x, MetaFormula):
+        return agg([is_categorical(t) for t in x])
 
 def ensure_tuple(t):
     if type(t) is tuple:
@@ -131,7 +133,7 @@ def encode_categorical(vals, names, method='sparse', drop=Drop.FIRST):
 
     # implement final encoding
     if method == 'ordinal':
-        cats_enc = cats_val.reshape(-1, 1)
+        cats_enc = cats_val
     elif method == 'sparse':
         cats_enc = onehot_encode(cats_val)
 
@@ -150,9 +152,9 @@ def drop_invalid(valid, *mats, warn=False, name='data'):
         ]
     return *mats,
 
-def prune_sparse(mat, labels, warn=True):
+def prune_sparse(labels, values, warn=True):
     # get active categories
-    vcats = np.ravel((mat!=0).sum(axis=0)) > 0
+    vcats = np.ravel((values!=0).sum(axis=0)) > 0
     P = np.sum(vcats)
 
     # get total categories
@@ -161,7 +163,7 @@ def prune_sparse(mat, labels, warn=True):
 
     # bail if total
     if P == K:
-        return mat, labels
+        return labels, values
     if warn:
         print(f'pruning {K-P}/{K} unused categories')
 
@@ -169,18 +171,18 @@ def prune_sparse(mat, labels, warn=True):
     vcats = split_size(vcats, Kt)
 
     # modify data matrices
-    mat = mat[:, vcats]
+    values = values[:, vcats]
     labels = {
         t: [l for l, v in zip(ls, vs) if v]
         for (t, ls), vs in zip(labels.items(), vcats)
     }
 
-    return mat, labels
+    return labels, values
 
-def prune_ordinal(mat, labels, warn=True):
+def prune_ordinal(labels, values, warn=True):
     # get active categories
     cvals, cinvs, cnums = zip(*[
-        np.unique(cm, return_inverse=True, return_counts=True) for cm in mat.T
+        np.unique(cm, return_inverse=True, return_counts=True) for cm in values.T
     ])
     P = sum([len(cn) for cn in cnums])
 
@@ -190,25 +192,25 @@ def prune_ordinal(mat, labels, warn=True):
 
     # bail if total
     if P >= K:
-        return mat, labels
+        return labels, values
     if warn:
         print(f'pruning {K-P}/{K} unused categories')
 
     # modify data matrices (tricky to exclude -1)
-    mat = np.vstack([ci+np.min(cv) for cv, ci in zip(cvals, cinvs)]).T
+    values = np.vstack([ci+np.min(cv) for cv, ci in zip(cvals, cinvs)]).T
     labels = {
         t: [ls[v] for v in cv if v != -1]
         for (t, ls), cv in zip(labels.items(), cvals)
     }
 
-    return mat, labels
+    return labels, values
 
-# remove unused categories (sparse `mat` requires `labels`)
-def prune_categories(mat, labels, method='sparse', warn=True):
+# remove unused categories (sparse `values` requires `labels`)
+def prune_categories(labels, values, method='sparse', warn=True):
     if method == 'sparse':
-        return prune_sparse(mat, labels, warn=warn)
+        return prune_sparse(labels, values, warn=warn)
     elif method == 'ordinal':
-        return prune_ordinal(mat, labels, warn=warn)
+        return prune_ordinal(labels, values, warn=warn)
 
 def drop_type(d):
     return d if d in (Drop.FIRST, Drop.NONE) else Drop.VALUE
@@ -381,11 +383,16 @@ class Term(MetaTerm):
     def raw(self, data, extern=None):
         return np.vstack([f.raw(data, extern=extern) for f in self]).T
 
-    def eval(self, data, method='sparse', extern=None, squeeze=False):
+    def eval(self, data, extern=None, method='sparse'):
+        if method not in ('sparse', 'ordinal'):
+            raise ValueError(f'Unknown encoding method: {method}')
+
         # zero length is identity
         if len(self) == 0:
             N = len(data)
-            return np.ones((N, 1)), ['I'], np.ones(N, dtype=bool)
+            return Column(
+                I, ['I'], np.ones(N), np.ones(N, dtype=bool)
+            )
 
         # separate pure real and categorical
         categ, reals = categorize(is_categorical, self)
@@ -397,36 +404,30 @@ class Term(MetaTerm):
 
         # handle categorical
         if len(categ) > 0:
-            categ_mat = categ.raw(data, extern=extern)
+            categ_raw = categ.raw(data, extern=extern)
             categ_nam = [c.name() for c in categ]
             categ_value, categ_label, categ_valid = encode_categorical(
-                categ_mat, categ_nam, method=method, drop=self._drop
+                categ_raw, categ_nam, method=method, drop=self._drop
             )
 
         # handle reals
         if len(reals) > 0:
             reals_mat = reals.raw(data, extern=extern)
-            reals_value = reals_mat.prod(axis=1).reshape(-1, 1)
+            reals_value = reals_mat.prod(axis=1)
             reals_label = reals.name()
             reals_valid = valid_rows(reals_value)
 
         # combine results
         if len(categ) == 0:
-            if squeeze:
-                return reals_value.squeeze(), reals_label, reals_valid
-            else:
-                return reals_value, [reals_label], reals_valid
+            return Column(self, [reals_label], reals_value, reals_valid)
         elif len(reals) == 0:
-            if squeeze:
-                return categ_value.squeeze(), categ_label, categ_valid
-            else:
-                return categ_value, categ_label, categ_valid
+            return Column(self, categ_label, categ_value, categ_valid)
         else:
             # filling nulls with 0 keeps sparse the same
-            term_value = categ_value.multiply(fillna(reals_value, v=0))
+            term_value = categ_value.multiply(fillna(reals_value, v=0)[:,None])
             term_label = [f'({l})*{reals_label}' for l in categ_label]
             term_valid = categ_valid & reals_valid
-            return term_value, term_label, term_valid
+            return Column(self, term_label, term_value, term_valid)
 
 class Formula(MetaFormula):
     def __init__(self, *terms):
@@ -492,42 +493,47 @@ class Formula(MetaFormula):
     def raw(self, data, extern=None):
         return [t.raw(data, extern=extern) for t in self]
 
-    def eval(self, data, method='sparse', extern=None, flatten=False):
-        # split by all real or not
-        categ, reals = categorize(is_categorical, self)
+    def eval(self, data, extern=None, method='sparse', group=True, flatten=False):
+        if method not in ('sparse', 'ordinal'):
+            raise ValueError(f'Unknown encoding method: {method}')
 
-        # handle categories
-        if len(categ) > 0:
-            categ_value, categ_label, categ_valid = zip(*[
-                t.eval(data, method=method, extern=extern) for t in categ
-            ])
-            categ_value = hstack(categ_value)
-            categ_valid = all_valid(*categ_valid)
-        else:
-            categ_value, categ_label, categ_valid = None, [], None
+        # get all term specs (type, labels, values, valid)
+        columns = [t.eval(data, extern=extern, method=method) for t in self]
+        valid = all_valid(*[c.valid for c in columns])
 
-        # combine labels
-        categ_label = {t: ls for t, ls in zip(categ, categ_label)}
+        # just return raw specs
+        if not group and not flatten:
+            specs = [(c.term, c.labels, c.values) for c in columns]
+            return specs, valid
 
-        # handle reals
-        if len(reals) > 0:
-            reals_value, reals_label, reals_valid = zip(*[
-                t.eval(data, extern=extern) for t in reals
-            ])
-            reals_value = hstack(reals_value)
-            reals_label = chainer(reals_label)
-            reals_valid = all_valid(*reals_valid)
-        else:
-            reals_value, reals_label, reals_valid = None, [], None
+        # group by real/categorical
+        if group or flatten:
+            # combine labels and default values
+            categ, reals = categorize(lambda c: is_categorical(c.term), columns)
+            reals_label = chainer([c.labels for c in reals])
+            categ_label = {c.term.name(): c.labels for c in categ}
+            reals_value, categ_value = None, None
 
-        # return separately
-        valids = all_valid(reals_valid, categ_valid)
+            # handle real terms
+            if len(reals) > 0:
+                reals_value = hstack([c.values[:,None] for c in reals])
+
+            # handle categorical terms
+            if len(categ) > 0:
+                if method == 'ordinal':
+                    categ_value = hstack([c.values[:,None] for c in categ])
+                elif method == 'sparse':
+                    categ_value = hstack([c.values for c in categ])
+
+        # do a full flatten?
         if flatten:
-            values = hstack([reals_value, categ_value])
             labels = reals_label + chainer(categ_label.values())
-            return values, labels, valids
+            values = hstack([reals_value, categ_value])
         else:
-            return (reals_value, categ_value), (reals_label, categ_label), valids
+            labels = reals_label, categ_label
+            values = reals_value, categ_value
+
+        return labels, values, valid
 
 ##
 ## column types
@@ -733,7 +739,9 @@ def design_matrix(
     _, x = ensure_formula(x=x, formula=formula)
 
     # evaluate x variables
-    (x_vec, c_vec), (x_lab, c_lab), val = x.eval(data, method=method, extern=extern)
+    (x_lab, c_lab), (x_vec, c_vec), val = x.eval(
+        data, extern=extern, method=method, group=True
+    )
 
     # aggregate valid info for data
     valid = all_valid(valid0, val)
@@ -744,15 +752,15 @@ def design_matrix(
 
     # prune empty categories if requested
     if prune and c_vec is not None:
-        c_vec, c_lab = prune_categories(c_vec, c_lab, method=method, warn=warn)
+        c_lab, c_vec = prune_categories(c_lab, c_vec, method=method, warn=warn)
 
     # combine real and categorical?
     if flatten:
-        vec = hstack([x_vec, c_vec])
         lab = x_lab + chainer(c_lab.values())
-        ret = vec, lab
+        vec = hstack([x_vec, c_vec])
+        ret = lab, vec
     else:
-        ret = (x_vec, c_vec), (x_lab, c_lab)
+        ret = (x_lab, c_lab), (x_vec, c_vec)
 
     # return valid mask?
     if validate:
@@ -776,8 +784,8 @@ def design_matrices(
 
     # get valid x data
     x_val0 = all_valid(valid0, y_val)
-    x_vec, x_lab, valid = design_matrix(
-        x=x, data=data, dropna=dropna, extern=extern, valid0=x_val0, warn=warn,
+    x_lab, x_vec, valid = design_matrix(
+        x=x, data=data, dropna=dropna, extern=extern, valid0=x_val0, warn=False,
         validate=True, **kwargs
     )
 
@@ -786,7 +794,7 @@ def design_matrices(
         y_vec, = drop_invalid(valid, y_vec, warn=warn, name='y')
 
     # return combined data
-    ret = y_vec, y_lab, x_vec, x_lab
+    ret = y_lab, y_vec, x_lab, x_vec
     if validate:
         return *ret, valid
     else:

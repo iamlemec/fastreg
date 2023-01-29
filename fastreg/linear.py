@@ -32,6 +32,7 @@ def ols(
     # use hdfe trick
     if hdfe is not None:
         h_trm = parse_tuple(hdfe, convert=Categ)
+        h_nam = h_trm.name()
         x = (x - h_trm) + h_trm # pop to end
 
     # don't include absorb
@@ -54,7 +55,7 @@ def ols(
         valid &= valid_rows(s_mat)
 
     # make design matrices
-    y_vec, y_name, (x0_mat, c_mat), (x0_names, c_names0), valid = design_matrices(
+    y_name, y_vec, (x0_names, c_names0), (x0_mat, c_mat), valid = design_matrices(
         y=y, x=x, formula=formula, data=data, valid0=valid, extern=extern, warn=warn,
         flatten=False, validate=True
     )
@@ -117,7 +118,7 @@ def ols(
 
     # find inv(xpx) somehow
     if hdfe is not None:
-        Kh = len(c_names0[h_trm])
+        Kh = len(c_names0[h_nam])
         xh_mat, ch_mat = ensure_dense(x_mat[:, :-Kh]), x_mat[:, -Kh:]
         ixr, ixc = block_outer_inverse(xh_mat, ch_mat)
     else:

@@ -5,13 +5,12 @@
 from operator import and_
 from functools import partial
 
-import jax.numpy as np  
 import jax
-from jax.tree_util import tree_flatten, tree_unflatten, tree_map, tree_reduce
+import jax.numpy as np
+from jax.tree_util import tree_unflatten, tree_map, tree_reduce
 
-from .meta import MetaFormula
-from .tools import hstack, chainer
-from .formula import valid_rows, all_valid, drop_invalid, is_categorical, prune_categories
+from .meta import MetaFactor, MetaTerm, MetaFormula
+from .formula import all_valid, is_categorical, prune_categories
 
 # modified from stock jax version to allow variable inner shapes
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
@@ -32,38 +31,62 @@ def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
     subtrees = map(partial(tree_unflatten, outer_treedef), transposed_lol)
     return tree_unflatten(inner_treedef, subtrees)
 
+# subset data allowing for missing chunks
+def tree_drop_invalid(values, valid, warn=False):
+    V, N = np.sum(valid), len(valid)
+    dropper = lambda x: x[valid] if x is not None else x
+    if V < N:
+        if warn:
+            print(f'dropping {N-V}/{N} null rows')
+        return tree_map(dropper, values)
+    else:
+        return values
+
 # tree of terms -> tree of values and tree of labels
 def design_tree(
     tree, data=None, extern=None, method='ordinal', dropna=True, validate=False,
-    valid0=None, prune=True, flatten=False, warn=False
+    valid0=None, prune=True, flatten=True
 ):
-    # use eval to get data, labels, valid
-    info = tree_map(
-        lambda x: x.eval(data, extern=extern, method=method, squeeze=True), tree
-    )
+    # use eval to get labels, values, valid
+    def eval_term(term):
+        col = term.eval(data, extern=extern, method=method)
+        if isinstance(term, (MetaFactor, MetaTerm)):
+            if is_categorical(term):
+                labels = {term.name(): col.labels}
+            else:
+                labels = col.labels
+            values = col.values
+            valid = col.valid
+        elif isinstance(term, MetaFormula):
+            if is_categorical(term):
+                (_, labels), (_, values), valid = col
+            else:
+                (labels, _), (values, _), valid = col
+        return labels, values, valid
+    spec = tree_map(eval_term, tree)
 
     # unpack into separate trees (hacky)
     struct_outer = jax.tree_util.tree_structure(tree)
     struct_inner3 = jax.tree_util.tree_structure((0, 0, 0))
-    values, labels, valids = tree_transpose(struct_outer, struct_inner3, info)
+    labels, values, valids = tree_transpose(struct_outer, struct_inner3, spec)
 
     # drop invalid rows
     valid = all_valid(valid0, tree_reduce(and_, valids))
     if dropna:
-        values = tree_map(lambda x: x[valid], values)
+        values = tree_drop_invalid(values, valid)
 
     # prune categories
     if prune:
-        prune_cats = lambda v, l: prune_categories(v, l, method=method, warn=False)
-        pruned = tree_map(
-            lambda i, v, l: prune_cats(v, {i: l}) if is_categorical(i) else (v, l),
-            tree, values, labels
-        )
+        def prune_cats(t, l, v):
+            if type(l) is dict:
+                l, v = prune_categories(l, v, method=method, warn=False)
+            return l, v
+        pruned = tree_map(prune_cats, tree, labels, values)
         struct_inner2 = jax.tree_util.tree_structure((0, 0))
-        values, labels = tree_transpose(struct_outer, struct_inner2, pruned)
+        labels, values = tree_transpose(struct_outer, struct_inner2, pruned)
 
     # return requested info
     if validate:
-        return values, labels, valid
+        return labels, values, valid
     else:
-        return values, labels
+        return labels, values

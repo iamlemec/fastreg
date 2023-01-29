@@ -230,9 +230,7 @@ def diag_fisher(gv_fun, params, loader):
 # just get mean and var vectors
 def flatten_output(beta, sigma):
     beta_real = beta['real']
-    beta_categ = hstack([
-        beta['categ'][c] for c in beta['categ']
-    ])
+    beta_categ = hstack(beta['categ'].values())
 
     sigma_real = maybe_diag(sigma['real']['real'])
     sigma_categ = hstack([
@@ -427,16 +425,13 @@ def glm(
     r_val = all_valid(*[valid_rows(v) for v in r_vec.values()])
 
     # construct design matrices
-    y_vec, y_name, (x_mat, c_mat), (x_names, c_names), valid = design_matrices(
+    y_name, y_vec, (x_names, c_names), (x_mat, c_mat), valid = design_matrices(
         y=y, x=x, data=data, method='ordinal', extern=extern, flatten=False,
         validate=True, valid0=r_val
     )
 
     # drop invalid raw rows
     r_vec = {k: v[valid] for k, v in r_vec.items()}
-
-    # accumulate all names
-    c_names = {c.name(): ls for c, ls in c_names.items()}
 
     # get data shape
     N = len(y_vec)

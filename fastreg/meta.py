@@ -1,6 +1,7 @@
 # metaclass structure (helps with autoreload and isinstance)
 
 from enum import Enum
+from collections import namedtuple
 
 class MetaFactor:
     pass
@@ -21,3 +22,7 @@ class Drop(Enum):
     NONE = 0
     FIRST = 1
     VALUE = 2
+
+Column = namedtuple(
+    'Column', ['term', 'labels', 'values', 'valid']
+)
