@@ -44,12 +44,12 @@ def tree_drop_invalid(values, valid, warn=False):
 
 # tree of terms -> tree of values and tree of labels
 def design_tree(
-    tree, data=None, extern=None, method='ordinal', dropna=True, validate=False,
+    tree, data=None, extern=None, encoding='ordinal', dropna=True, validate=False,
     valid0=None, prune=True, flatten=True
 ):
     # use eval to get labels, values, valid
     def eval_term(term):
-        col = term.eval(data, extern=extern, method=method)
+        col = term.eval(data, extern=extern, encoding=encoding)
         if isinstance(term, (MetaFactor, MetaTerm)):
             if is_categorical(term):
                 labels = {term.name(): col.labels}
@@ -79,7 +79,7 @@ def design_tree(
     if prune:
         def prune_cats(t, l, v):
             if type(l) is dict:
-                l, v = prune_categories(l, v, method=method, warn=False)
+                l, v = prune_categories(l, v, encoding=encoding, warn=False)
             return l, v
         pruned = tree_map(prune_cats, tree, labels, values)
         struct_inner2 = jax.tree_util.tree_structure((0, 0))

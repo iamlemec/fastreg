@@ -1,7 +1,6 @@
 from . import tools
 from . import formula
 from . import linear
-from . import general
 from . import testing
 
 from .tools import (
@@ -26,9 +25,13 @@ except:
     HAS_JAX = False
 
 if HAS_JAX:
+    from . import general
+    from . import trees
+
     from .general import (
         glm, logit, poisson, negbin, poisson_zinf, negbin_zinf, gols,
         zero_inflate, add_offset, losses, binary_loss, poisson_loss,
         negbin_loss, lstsq_loss, normal_loss, maxlike, maxlike_panel,
         glm_model, rmsprop
     )
+    from .trees import design_tree
