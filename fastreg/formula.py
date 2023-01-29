@@ -112,7 +112,7 @@ def zero_category(vals, labs, lab0):
     return vals, labs
 
 # encode categories as one-hot matrix or ordinals
-def encode_categorical(vals, names, method='sparse', drop=Drop.FIRST):
+def encode_categorical(vals, names, encoding='sparse', drop=Drop.FIRST):
     # reindex categoricals jointly
     cats_val, cats_lab, valid = category_indices(vals, return_labels=True)
     cats_lab = [swizzle(names, l) for l in cats_lab]
@@ -132,9 +132,9 @@ def encode_categorical(vals, names, method='sparse', drop=Drop.FIRST):
         cats_lab = cats_lab[1:]
 
     # implement final encoding
-    if method == 'ordinal':
+    if encoding == 'ordinal':
         cats_enc = cats_val
-    elif method == 'sparse':
+    elif encoding == 'sparse':
         cats_enc = onehot_encode(cats_val)
 
     return cats_enc, cats_lab, valid
@@ -206,10 +206,10 @@ def prune_ordinal(labels, values, warn=True):
     return labels, values
 
 # remove unused categories (sparse `values` requires `labels`)
-def prune_categories(labels, values, method='sparse', warn=True):
-    if method == 'sparse':
+def prune_categories(labels, values, encoding='sparse', warn=True):
+    if encoding == 'sparse':
         return prune_sparse(labels, values, warn=warn)
-    elif method == 'ordinal':
+    elif encoding == 'ordinal':
         return prune_ordinal(labels, values, warn=warn)
 
 def drop_type(d):
@@ -383,31 +383,31 @@ class Term(MetaTerm):
     def raw(self, data, extern=None):
         return np.vstack([f.raw(data, extern=extern) for f in self]).T
 
-    def eval(self, data, extern=None, method='sparse'):
-        if method not in ('sparse', 'ordinal'):
-            raise ValueError(f'Unknown encoding method: {method}')
+    def eval(self, data, extern=None, encoding='sparse'):
+        if encoding not in ('sparse', 'ordinal'):
+            raise ValueError(f'Unknown encoding: {encoding}')
 
         # zero length is identity
         if len(self) == 0:
             N = len(data)
             return Column(
-                I, ['I'], np.ones(N), np.ones(N, dtype=bool)
+                I, 'I', np.ones(N), np.ones(N, dtype=bool)
             )
 
         # separate pure real and categorical
         categ, reals = categorize(is_categorical, self)
         categ, reals = Term(*categ), Term(*reals)
 
-        # error with mixed types + method='ordinal'
-        if method == 'ordinal' and len(categ) > 0 and len(reals) > 0:
-            raise ValueError('Cannot use method="ordinal" with mixed factor types')
+        # error with mixed types + encoding='ordinal'
+        if encoding == 'ordinal' and len(categ) > 0 and len(reals) > 0:
+            raise ValueError('Cannot use encoding="ordinal" with mixed factor types')
 
         # handle categorical
         if len(categ) > 0:
             categ_raw = categ.raw(data, extern=extern)
             categ_nam = [c.name() for c in categ]
             categ_value, categ_label, categ_valid = encode_categorical(
-                categ_raw, categ_nam, method=method, drop=self._drop
+                categ_raw, categ_nam, encoding=encoding, drop=self._drop
             )
 
         # handle reals
@@ -419,7 +419,7 @@ class Term(MetaTerm):
 
         # combine results
         if len(categ) == 0:
-            return Column(self, [reals_label], reals_value, reals_valid)
+            return Column(self, reals_label, reals_value, reals_valid)
         elif len(reals) == 0:
             return Column(self, categ_label, categ_value, categ_valid)
         else:
@@ -493,12 +493,12 @@ class Formula(MetaFormula):
     def raw(self, data, extern=None):
         return [t.raw(data, extern=extern) for t in self]
 
-    def eval(self, data, extern=None, method='sparse', group=True, flatten=False):
-        if method not in ('sparse', 'ordinal'):
-            raise ValueError(f'Unknown encoding method: {method}')
+    def eval(self, data, extern=None, encoding='sparse', group=True, flatten=False):
+        if encoding not in ('sparse', 'ordinal'):
+            raise ValueError(f'Unknown encoding: {encoding}')
 
         # get all term specs (type, labels, values, valid)
-        columns = [t.eval(data, extern=extern, method=method) for t in self]
+        columns = [t.eval(data, extern=extern, encoding=encoding) for t in self]
         valid = all_valid(*[c.valid for c in columns])
 
         # just return raw specs
@@ -510,7 +510,7 @@ class Formula(MetaFormula):
         if group or flatten:
             # combine labels and default values
             categ, reals = categorize(lambda c: is_categorical(c.term), columns)
-            reals_label = chainer([c.labels for c in reals])
+            reals_label = [c.labels for c in reals]
             categ_label = {c.term.name(): c.labels for c in categ}
             reals_value, categ_value = None, None
 
@@ -520,9 +520,9 @@ class Formula(MetaFormula):
 
             # handle categorical terms
             if len(categ) > 0:
-                if method == 'ordinal':
+                if encoding == 'ordinal':
                     categ_value = hstack([c.values[:,None] for c in categ])
-                elif method == 'sparse':
+                elif encoding == 'sparse':
                     categ_value = hstack([c.values for c in categ])
 
         # do a full flatten?
@@ -733,14 +733,14 @@ def ensure_formula(y=None, x=None, formula=None):
     return y, x
 
 def design_matrix(
-    x=None, formula=None, data=None, method='sparse', dropna=True, prune=True,
+    x=None, formula=None, data=None, encoding='sparse', dropna=True, prune=True,
     warn=True, extern=None, valid0=None, flatten=True, validate=False
 ):
     _, x = ensure_formula(x=x, formula=formula)
 
     # evaluate x variables
     (x_lab, c_lab), (x_vec, c_vec), val = x.eval(
-        data, extern=extern, method=method, group=True
+        data, extern=extern, encoding=encoding, group=True
     )
 
     # aggregate valid info for data
@@ -752,7 +752,7 @@ def design_matrix(
 
     # prune empty categories if requested
     if prune and c_vec is not None:
-        c_lab, c_vec = prune_categories(c_lab, c_vec, method=method, warn=warn)
+        c_lab, c_vec = prune_categories(c_lab, c_vec, encoding=encoding, warn=warn)
 
     # combine real and categorical?
     if flatten:

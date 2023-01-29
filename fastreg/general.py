@@ -426,7 +426,7 @@ def glm(
 
     # construct design matrices
     y_name, y_vec, (x_names, c_names), (x_mat, c_mat), valid = design_matrices(
-        y=y, x=x, data=data, method='ordinal', extern=extern, flatten=False,
+        y=y, x=x, data=data, encoding='ordinal', extern=extern, flatten=False,
         validate=True, valid0=r_val
     )
 
