@@ -24,5 +24,5 @@ class Drop(Enum):
     VALUE = 2
 
 Column = namedtuple(
-    'Column', ['term', 'labels', 'values', 'valid']
+    'Column', ['name', 'labels', 'values', 'valid']
 )

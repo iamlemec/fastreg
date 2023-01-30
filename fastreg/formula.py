@@ -391,7 +391,7 @@ class Term(MetaTerm):
         if len(self) == 0:
             N = len(data)
             return Column(
-                I, 'I', np.ones(N), np.ones(N, dtype=bool)
+                'I', 'I', np.ones(N), np.ones(N, dtype=bool)
             )
 
         # separate pure real and categorical
@@ -418,16 +418,17 @@ class Term(MetaTerm):
             reals_valid = valid_rows(reals_value)
 
         # combine results
+        name = self.name()
         if len(categ) == 0:
-            return Column(self, reals_label, reals_value, reals_valid)
+            return Column(name, reals_label, reals_value, reals_valid)
         elif len(reals) == 0:
-            return Column(self, categ_label, categ_value, categ_valid)
+            return Column(name, categ_label, categ_value, categ_valid)
         else:
             # filling nulls with 0 keeps sparse the same
             term_value = categ_value.multiply(fillna(reals_value, v=0)[:,None])
             term_label = [f'({l})*{reals_label}' for l in categ_label]
             term_valid = categ_valid & reals_valid
-            return Column(self, term_label, term_value, term_valid)
+            return Column(name, term_label, term_value, term_valid)
 
 class Formula(MetaFormula):
     def __init__(self, *terms):
@@ -448,7 +449,10 @@ class Formula(MetaFormula):
             return False
 
     def __repr__(self):
-        return ' + '.join(str(t) for t in self)
+        if len(self) == 0:
+            return 'O'
+        else:
+            return ' + '.join(str(t) for t in self)
 
     def __iter__(self):
         return iter(self._terms)
@@ -497,21 +501,30 @@ class Formula(MetaFormula):
         if encoding not in ('sparse', 'ordinal'):
             raise ValueError(f'Unknown encoding: {encoding}')
 
+        # zero length is zero
+        if len(self) == 0:
+            N = len(data)
+            labels, values, valid = 'O', np.zeros(N), np.ones(N, dtype=bool)
+            if flatten:
+                return labels, values, valid
+            else:
+                return (labels, None), (values, None), valid
+
         # get all term specs (type, labels, values, valid)
         columns = [t.eval(data, extern=extern, encoding=encoding) for t in self]
         valid = all_valid(*[c.valid for c in columns])
 
         # just return raw specs
         if not group and not flatten:
-            specs = [(c.term, c.labels, c.values) for c in columns]
+            specs = [(c.name, c.labels, c.values) for c in columns]
             return specs, valid
 
         # group by real/categorical
         if group or flatten:
             # combine labels and default values
-            categ, reals = categorize(lambda c: is_categorical(c.term), columns)
+            categ, reals = categorize(lambda c: type(c.labels) is list, columns)
             reals_label = [c.labels for c in reals]
-            categ_label = {c.term.name(): c.labels for c in categ}
+            categ_label = {c.name: c.labels for c in categ}
             reals_value, categ_value = None, None
 
             # handle real terms

@@ -9,12 +9,13 @@ from jax.tree_util import tree_flatten, tree_leaves, tree_map, tree_reduce
 from jax.lax import logistic
 from jax.numpy import exp
 
-from .formula import (
-    design_matrices, parse_tuple, ensure_formula, parse_item, Categ
-)
 from .tools import (
-    block_inverse, chainer, maybe_diag, atleast_2d, hstack, valid_rows, all_valid
+    block_inverse, chainer, maybe_diag, atleast_2d, hstack
 )
+from .formula import (
+    parse_tuple, ensure_formula, categorize, is_categorical, Categ, Formula, O
+)
+from .trees import design_tree
 from .summary import param_table
 
 ##
@@ -229,16 +230,16 @@ def diag_fisher(gv_fun, params, loader):
 
 # just get mean and var vectors
 def flatten_output(beta, sigma):
-    beta_real = beta['real']
+    beta_reals = beta['reals']
     beta_categ = hstack(beta['categ'].values())
 
-    sigma_real = maybe_diag(sigma['real']['real'])
+    sigma_reals = maybe_diag(sigma['reals']['reals']) if sigma['reals'] is not None else None
     sigma_categ = hstack([
         maybe_diag(sigma['categ'][c]['categ'][c]) for c in sigma['categ']
     ])
 
-    beta_vec = hstack([beta_real, beta_categ])
-    sigma_vec = hstack([sigma_real, sigma_categ])
+    beta_vec = hstack([beta_reals, beta_categ])
+    sigma_vec = hstack([sigma_reals, sigma_categ])
 
     return beta_vec, sigma_vec
 
@@ -386,13 +387,15 @@ def glm_model(loss, hdfe=None):
     # evaluator function
     def model(par, dat):
         # load in data and params
-        ydat, xdat, cdat = dat['ydat'], dat['xdat'], dat['cdat']
-        real, categ = par['real'], par['categ']
+        ydat, rdat, cdat, odat = dat['ydat'], dat['rdat'], dat['cdat'], dat['odat']
+        reals, categ = par['reals'], par['categ']
         if hdfe is not None:
             categ[hdfe] = par.pop('hdfe')
 
         # evaluate linear predictor
-        pred = xdat @ real
+        pred = odat
+        if rdat is not None:
+            pred += rdat @ reals
         for i, c in enumerate(categ):
             cidx = cdat.T[i] # needed for vmap to work
             pred += np.where(cidx >= 0, categ[c][cidx], 0.0) # -1 means drop
@@ -419,50 +422,46 @@ def glm(
         hdfe = c_hdfe.name()
 
     # add in raw data with offset special case
-    if offset is not None:
-        raw = {**raw, 'offset': offset}
-    r_vec = {k: parse_item(v).raw(data, extern=extern) for k, v in raw.items()}
-    r_val = all_valid(*[valid_rows(v) for v in r_vec.values()])
+    if offset is None:
+        offset = O
 
-    # construct design matrices
-    y_name, y_vec, (x_names, c_names), (x_mat, c_mat), valid = design_matrices(
-        y=y, x=x, data=data, encoding='ordinal', extern=extern, flatten=False,
-        validate=True, valid0=r_val
-    )
+    # get all data in tree form
+    formulify = lambda ts: Formula(*ts) if len(ts) > 0 else None
+    c, r = map(formulify, categorize(is_categorical, x))
+    tree = {'ydat': y, 'rdat': r, 'cdat': c, 'odat': offset, **raw}
+    nam, dat = design_tree(tree, data=data)
 
-    # drop invalid raw rows
-    r_vec = {k: v[valid] for k, v in r_vec.items()}
-
-    # get data shape
-    N = len(y_vec)
-    Kx = len(x_names)
+    # handle no reals/categ case
+    if tree['cdat'] is None:
+        nam['cdat'] = {}
+    if tree['rdat'] is None:
+        nam['rdat'] = []
 
     # choose number of epochs
+    N = len(dat['ydat'])
     epochs = max(1, 50_000_000 // N) if epochs is None else epochs
     per = max(1, epochs // 5) if per is None else per
 
     # create model if needed
     if model is None:
-        if offset is not None:
-            loss = add_offset(loss, key='offset')
         model = glm_model(loss, hdfe=hdfe)
 
     # displayer
     def disp0(e, l, g, x, f, p, final=False):
-        real, categ = p['real'], p['categ']
-        if hdfe is not None:
-            categ = categ.copy()
-            categ[hdfe] = p['hdfe']
-        mcats = np.array([np.mean(c) for c in categ.values()])
         if e % per == 0 or final:
-            μR, μC = np.mean(real), np.mean(mcats)
-            print(f'[{e:3d}] ℓ={l:.5f}, g={g:.5f}, Δβ={x:.5f}, Δℓ={f:.5f}, μR={μR:.5f}, μC={μC:.5f}')
+            reals, categ = p['reals'], p['categ']
+            if hdfe is not None:
+                categ = categ.copy()
+                categ[hdfe] = p['hdfe']
+            μr = np.mean(reals) if reals is not None else np.nan
+            μc = np.mean(np.array([np.mean(c) for c in categ.values()]))
+            print(f'[{e:3d}] ℓ={l:.5f}, g={g:.5f}, Δβ={x:.5f}, Δℓ={f:.5f}, μR={μr:.5f}, μC={μc:.5f}')
     disp = disp0 if display else None
 
     # organize data and initial params
-    dat = {'ydat': y_vec, 'xdat': x_mat, 'cdat': c_mat, **r_vec}
-    pcateg = {c: np.zeros(len(ls)) for c, ls in c_names.items()}
-    params = {'real': np.zeros(Kx), 'categ': pcateg, **extra}
+    preals = np.zeros(len(nam['rdat'])) if len(nam['rdat']) > 0 else None
+    pcateg = {c: np.zeros(len(ls)) for c, ls in nam['cdat'].items()}
+    params = {'reals': preals, 'categ': pcateg, **extra}
     if hdfe is not None:
         params['hdfe'] = params['categ'].pop(hdfe)
 
@@ -480,11 +479,12 @@ def glm(
 
     # return requested info
     if output == 'table':
-        names = x_names + chainer(c_names.values())
+        y_name = nam['ydat']
+        x_names = nam['rdat'] + chainer(nam['cdat'].values())
         beta_vec, sigma_vec = flatten_output(beta, sigma)
-        return param_table(beta_vec, y_name, names, sigma=sigma_vec)
+        return param_table(beta_vec, y_name, x_names, sigma=sigma_vec)
     elif output == 'dict':
-        names = {'real': x_names, 'categ': c_names}
+        names = {'reals': nam['rdat'], 'categ': nam['cdat']}
         return names, beta, sigma
 
 # logit regression

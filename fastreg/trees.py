@@ -51,10 +51,7 @@ def design_tree(
     def eval_term(term):
         col = term.eval(data, extern=extern, encoding=encoding)
         if isinstance(term, (MetaFactor, MetaTerm)):
-            if is_categorical(term):
-                labels = {term.name(): col.labels}
-            else:
-                labels = col.labels
+            labels = col.labels
             values = col.values
             valid = col.valid
         elif isinstance(term, MetaFormula):
