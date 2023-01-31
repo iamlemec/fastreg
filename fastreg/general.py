@@ -248,8 +248,8 @@ def flatten_output(beta, sigma):
 ##
 
 def rmsprop(
-    vg_fun, loader, params0, epochs=10, eta=0.001, gamma=0.9, eps=1e-7,
-    xtol=1e-3, ftol=1e-5, disp=None
+    vg_fun, loader, params0, epochs=10, eta=0.005, gamma=0.99, eps=1e-7,
+    xtol=1e-4, ftol=1e-5, disp=None
 ):
     # parameter info
     params = tree_map(np.array, params0)
@@ -402,7 +402,7 @@ def glm_model(loss, hdfe=None):
 
         # compute average likelihood
         like = loss(par, dat, pred, ydat)
-        return np.mean(like)
+        return np.sum(like)
 
     return model
 
@@ -439,7 +439,7 @@ def glm(
 
     # choose number of epochs
     N = len(dat['ydat'])
-    epochs = max(1, 50_000_000 // N) if epochs is None else epochs
+    epochs = max(1, 100_000_000 // N) if epochs is None else epochs
     per = max(1, epochs // 5) if per is None else per
 
     # create model if needed
