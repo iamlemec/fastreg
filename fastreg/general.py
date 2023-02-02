@@ -248,7 +248,7 @@ def flatten_output(beta, sigma):
 ##
 
 def rmsprop(
-    vg_fun, loader, params0, epochs=10, eta=0.005, gamma=0.99, eps=1e-7,
+    vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.99, eps=1e-8,
     xtol=1e-4, ftol=1e-5, disp=None
 ):
     # parameter info
@@ -284,7 +284,7 @@ def rmsprop(
                 lambda r, g: gamma*r + (1-gamma)*g**2, grms, grad
             )
             params = tree_map(
-                lambda p, g, r: p + eta*g/np.sqrt(r+eps), params, grad, grms
+                lambda p, g, r: p + eta*g/(np.sqrt(r)+eps), params, grad, grms
             )
 
             # compute statistics
@@ -315,13 +315,90 @@ def rmsprop(
 
     return params
 
+def adam(
+    vg_fun, loader, params0, epochs=10, eta=0.001, beta1=0.9, beta2=0.999, eps=1e-8,
+    xtol=1e-4, ftol=1e-5, disp=None
+):
+    # parameter info
+    params = tree_map(np.array, params0)
+    avg_loss = -np.inf
+
+    # track rms gradient
+    m = tree_map(np.zeros_like, params)
+    v = tree_map(np.zeros_like, params)
+
+    # do training
+    for ep in range(epochs):
+        # epoch stats
+        agg_loss, agg_batch, tot_batch = 0.0, 0, 0
+        agg_grad = tree_map(np.zeros_like, params0)
+        last_par, last_loss = params, avg_loss
+
+        # iterate over batches
+        for batch in loader:
+            # compute gradients
+            loss, grad = vg_fun(params, batch)
+
+            # check for any nans
+            lnan = np.isnan(loss)
+            gnan = tree_reduce(
+                and_, tree_map(lambda g: np.isnan(g).any(), grad)
+            )
+            if lnan or gnan:
+                print('Encountered nans!')
+                return params, None
+
+            # implement next step
+            m = tree_map(
+                lambda m, g: beta1*m + (1-beta1)*g, m, grad
+            )
+            v = tree_map(
+                lambda v, g: beta2*v + (1-beta2)*g**2, v, grad
+            )
+
+            # update with adjusted values
+            mhat = tree_map(lambda m: m/(1-beta1**(tot_batch+1)), m)
+            vhat = tree_map(lambda v: v/(1-beta2**(tot_batch+1)), v)
+            params = tree_map(
+                lambda p, m, v: p + eta*m/(np.sqrt(v)+eps), params, mhat, vhat
+            )
+
+            # compute statistics
+            agg_loss += loss
+            agg_grad = tree_map(add, agg_grad, grad)
+            agg_batch += 1
+            tot_batch += 1
+
+        # compute stats
+        avg_loss = agg_loss/agg_batch
+        avg_grad = tree_map(lambda x: x/agg_batch, agg_grad)
+        abs_grad = tree_reduce(np.maximum, tree_map(lambda x: np.max(np.abs(x)), avg_grad))
+        par_diff = tree_reduce(
+            np.maximum, tree_map(lambda p1, p2: np.max(np.abs(p1-p2)), params, last_par)
+        )
+        loss_diff = np.abs(avg_loss-last_loss)
+
+        # display output
+        if disp is not None:
+            disp(ep, avg_loss, abs_grad, par_diff, loss_diff, params)
+
+        # check converge
+        if par_diff < xtol and loss_diff < ftol:
+            break
+
+    # show final result
+    if disp is not None:
+        disp(ep, avg_loss, abs_grad, par_diff, loss_diff, params, final=True)
+
+    return params
+
 ##
 ## estimation
 ##
 
 # maximum likelihood using jax - this expects a mean log likelihood
 def maxlike(
-    model=None, params=None, data=None, stderr=False, optim=rmsprop, batch_size=8192,
+    model=None, params=None, data=None, stderr=False, optim=adam, batch_size=8192,
     backend='cpu', **kwargs
 ):
     # get model gradients
@@ -351,7 +428,7 @@ def maxlike(
 # the assumes the data is batchable, which usually means panel-like
 # a toplevel hdfe variable is treated special-like in diag_fisher
 def maxlike_panel(
-    model=None, params=None, data=None, vg_fun=None, stderr=True, optim=rmsprop,
+    model=None, params=None, data=None, vg_fun=None, stderr=True, optim=adam,
     batch_size=8192, backend='cpu', **kwargs
 ):
     # compute gradient for optim
@@ -402,7 +479,7 @@ def glm_model(loss, hdfe=None):
 
         # compute average likelihood
         like = loss(par, dat, pred, ydat)
-        return np.sum(like)
+        return np.mean(like)
 
     return model
 
