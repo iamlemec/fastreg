@@ -248,7 +248,7 @@ def flatten_output(beta, sigma):
 ##
 
 def rmsprop(
-    vg_fun, loader, params0, epochs=10, eta=0.01, gamma=0.99, eps=1e-8,
+    vg_fun, loader, params0, epochs=10, eta=0.005, gamma=0.99, eps=1e-8,
     xtol=1e-4, ftol=1e-5, disp=None
 ):
     # parameter info
@@ -316,7 +316,7 @@ def rmsprop(
     return params
 
 def adam(
-    vg_fun, loader, params0, epochs=10, eta=0.001, beta1=0.9, beta2=0.999, eps=1e-8,
+    vg_fun, loader, params0, epochs=10, eta=0.01, beta1=0.9, beta2=0.99, eps=1e-8,
     xtol=1e-4, ftol=1e-5, disp=None
 ):
     # parameter info
@@ -486,8 +486,8 @@ def glm_model(loss, hdfe=None):
 # default glm specification
 def glm(
     y=None, x=None, formula=None, hdfe=None, data=None, extra={}, raw={},
-    offset=None, model=None, loss=None, extern=None, stderr=True, display=True,
-    epochs=None, per=None, output='table', **kwargs
+    offset=None, model=None, loss=None, stderr=True, display=True, epochs=None,
+    per=None, output='table', **kwargs
 ):
     # convert to formula system
     y, x = ensure_formula(x=x, y=y, formula=formula)
@@ -516,7 +516,7 @@ def glm(
 
     # choose number of epochs
     N = len(dat['ydat'])
-    epochs = max(1, 100_000_000 // N) if epochs is None else epochs
+    epochs = max(1, 200_000_000 // N) if epochs is None else epochs
     per = max(1, epochs // 5) if per is None else per
 
     # create model if needed
