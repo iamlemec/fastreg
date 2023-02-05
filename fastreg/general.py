@@ -247,10 +247,21 @@ def flatten_output(beta, sigma):
 ## optimizers
 ##
 
+# figure out burn-in - cosine decay
+def lr_schedule(eta, epochs, eta_boost=10.0, eta_burn=0.15):
+    eta_burn = int(eta_burn*epochs) if type(eta_burn) is float else eta_burn
+    def get_lr(ep):
+        decay = np.clip(ep/eta_burn, 0, 1)
+        coeff = 0.5*(1.0+np.cos(np.pi*decay))
+        return eta*(1+coeff*(eta_boost-1))
+    return get_lr
+
 def rmsprop(
     vg_fun, loader, params0, epochs=10, eta=0.005, gamma=0.99, eps=1e-8,
-    xtol=1e-4, ftol=1e-5, disp=None
+    xtol=1e-4, ftol=1e-5, eta_boost=10.0, eta_burn=0.15, disp=None
 ):
+    get_lr = lr_schedule(eta, epochs, eta_boost=eta_boost, eta_burn=eta_burn)
+
     # parameter info
     params = tree_map(np.array, params0)
     avg_loss = -np.inf
@@ -280,11 +291,12 @@ def rmsprop(
                 return params, None
 
             # implement next step
+            lr = get_lr(ep)
             grms = tree_map(
                 lambda r, g: gamma*r + (1-gamma)*g**2, grms, grad
             )
             params = tree_map(
-                lambda p, g, r: p + eta*g/(np.sqrt(r)+eps), params, grad, grms
+                lambda p, g, r: p + lr*g/(np.sqrt(r)+eps), params, grad, grms
             )
 
             # compute statistics
@@ -315,10 +327,13 @@ def rmsprop(
 
     return params
 
+# adam optimizer with initial boost + cosine decay
 def adam(
-    vg_fun, loader, params0, epochs=10, eta=0.01, beta1=0.9, beta2=0.99, eps=1e-8,
-    xtol=1e-4, ftol=1e-5, disp=None
+    vg_fun, loader, params0, epochs=10, eta=0.005, beta1=0.9, beta2=0.99, eps=1e-8,
+    xtol=1e-4, ftol=1e-5, eta_boost=10.0, eta_burn=0.15, disp=None
 ):
+    get_lr = lr_schedule(eta, epochs, eta_boost=eta_boost, eta_burn=eta_burn)
+
     # parameter info
     params = tree_map(np.array, params0)
     avg_loss = -np.inf
@@ -357,10 +372,11 @@ def adam(
             )
 
             # update with adjusted values
+            lr = get_lr(ep)
             mhat = tree_map(lambda m: m/(1-beta1**(tot_batch+1)), m)
             vhat = tree_map(lambda v: v/(1-beta2**(tot_batch+1)), v)
             params = tree_map(
-                lambda p, m, v: p + eta*m/(np.sqrt(v)+eps), params, mhat, vhat
+                lambda p, m, v: p + lr*m/(np.sqrt(v)+eps), params, mhat, vhat
             )
 
             # compute statistics
