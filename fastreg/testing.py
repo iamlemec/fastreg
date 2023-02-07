@@ -60,8 +60,8 @@ def dataset(
     if 'logit' in models:
         df['Eb0'] = 1/(1+np.exp(-df['yhat0']))
         df['Eb'] = 1/(1+np.exp(-df['yhat']))
-        df['b0'] = (st.rand(N) < df['Eb0']).astype(np.int)
-        df['b'] = (st.rand(N) < df['Eb']).astype(np.int)
+        df['b0'] = (st.rand(N) < df['Eb0']).astype(int)
+        df['b'] = (st.rand(N) < df['Eb']).astype(int)
 
     # poisson
     if 'poisson' in models:
