@@ -32,6 +32,6 @@ if HAS_JAX:
         glm, logit, poisson, negbin, poisson_zinf, negbin_zinf, gols,
         zero_inflate, add_offset, losses, binary_loss, poisson_loss,
         negbin_loss, lstsq_loss, normal_loss, maxlike, maxlike_panel,
-        glm_model, optax_wrap, adam_cosine
+        glm_model, adam, optax_wrap
     )
     from .trees import design_tree

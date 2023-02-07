@@ -248,19 +248,109 @@ def flatten_output(beta, sigma):
 ## optimizers
 ##
 
+# figure out burn-in - cosine decay
+def lr_schedule(eta, epochs, eta_boost=10.0, eta_burn=0.15):
+    eta_burn = int(eta_burn*epochs) if type(eta_burn) is float else eta_burn
+    def get_lr(ep):
+        decay = np.clip(ep/eta_burn, 0, 1)
+        coeff = 0.5*(1.0+np.cos(np.pi*decay))
+        return eta*(1+coeff*(eta_boost-1))
+    return get_lr
+
+# adam optimizer with initial boost + cosine decay
+def adam(
+    vg_fun, loader, params0, epochs=10, eta=0.005, beta1=0.9, beta2=0.99, eps=1e-8,
+    xtol=1e-4, ftol=1e-5, eta_boost=10.0, eta_burn=0.15, disp=None
+):
+    get_lr = lr_schedule(eta, epochs, eta_boost=eta_boost, eta_burn=eta_burn)
+
+    # parameter info
+    params = tree_map(np.array, params0)
+    avg_loss = -np.inf
+
+    # track rms gradient
+    m = tree_map(np.zeros_like, params)
+    v = tree_map(np.zeros_like, params)
+
+    # do training
+    for ep in range(epochs):
+        # epoch stats
+        agg_loss, agg_batch, tot_batch = 0.0, 0, 0
+        agg_grad = tree_map(np.zeros_like, params0)
+        last_par, last_loss = params, avg_loss
+
+        # iterate over batches
+        for batch in loader:
+            # compute gradients
+            loss, grad = vg_fun(params, batch)
+
+            # check for any nans
+            lnan = np.isnan(loss)
+            gnan = tree_reduce(
+                and_, tree_map(lambda g: np.isnan(g).any(), grad)
+            )
+            if lnan or gnan:
+                print('Encountered nans!')
+                return params, None
+
+            # implement next step
+            m = tree_map(
+                lambda m, g: beta1*m + (1-beta1)*g, m, grad
+            )
+            v = tree_map(
+                lambda v, g: beta2*v + (1-beta2)*g**2, v, grad
+            )
+
+            # update with adjusted values
+            lr = get_lr(ep)
+            mhat = tree_map(lambda m: m/(1-beta1**(tot_batch+1)), m)
+            vhat = tree_map(lambda v: v/(1-beta2**(tot_batch+1)), v)
+            params = tree_map(
+                lambda p, m, v: p + lr*m/(np.sqrt(v)+eps), params, mhat, vhat
+            )
+
+            # compute statistics
+            agg_loss += loss
+            agg_grad = tree_map(add, agg_grad, grad)
+            agg_batch += 1
+            tot_batch += 1
+
+        # compute stats
+        avg_loss = agg_loss/agg_batch
+        avg_grad = tree_map(lambda x: x/agg_batch, agg_grad)
+        abs_grad = tree_reduce(np.maximum, tree_map(lambda x: np.max(np.abs(x)), avg_grad))
+        par_diff = tree_reduce(
+            np.maximum, tree_map(lambda p1, p2: np.max(np.abs(p1-p2)), params, last_par)
+        )
+        loss_diff = np.abs(avg_loss-last_loss)
+
+        # display output
+        if disp is not None:
+            disp(ep, avg_loss, abs_grad, par_diff, loss_diff, params)
+
+        # check converge
+        if par_diff < xtol and loss_diff < ftol:
+            break
+
+    # show final result
+    if disp is not None:
+        disp(ep, avg_loss, abs_grad, par_diff, loss_diff, params, final=True)
+
+    return params
+
 # adam optimizer with cosine burn in
-def adam_cosine(learn=1e-2, boost=5.0, burn=0.2, epochs=None):
+def adam_cosine(learn=1e-2, boost=5.0, burn=0.2, epochs=None, **kwargs):
     burn = int(burn*epochs) if type(burn) is float else burn
     schedule = optax.cosine_decay_schedule(boost*learn, burn, alpha=1/boost)
     return optax.chain(
-        optax.scale_by_adam(),
+        optax.scale_by_adam(**kwargs),
         optax.scale_by_schedule(schedule)
     )
 
 # adam optimizer with initial boost + cosine decay
 def optax_wrap(
     vg_fun, loader, params0, optimizer=None, epochs=10, xtol=1e-4, ftol=1e-5,
-    disp=None, **kwargs
+    gtol=1e-4, disp=None, **kwargs
 ):
     # default optimizer
     if optimizer is None:
@@ -318,7 +408,7 @@ def optax_wrap(
             disp(ep, avg_loss, abs_grad, par_diff, loss_diff, params)
 
         # check converge
-        if par_diff < xtol and loss_diff < ftol:
+        if abs_grad < gtol and par_diff < xtol:
             break
 
     # show final result
@@ -333,7 +423,7 @@ def optax_wrap(
 
 # maximum likelihood using jax - this expects a mean log likelihood
 def maxlike(
-    model=None, params=None, data=None, stderr=False, optim=optax_wrap, batch_size=8192,
+    model=None, params=None, data=None, stderr=False, optim=adam, batch_size=8192,
     backend='cpu', **kwargs
 ):
     # get model gradients
@@ -363,7 +453,7 @@ def maxlike(
 # the assumes the data is batchable, which usually means panel-like
 # a toplevel hdfe variable is treated special-like in diag_fisher
 def maxlike_panel(
-    model=None, params=None, data=None, vg_fun=None, stderr=True, optim=optax_wrap,
+    model=None, params=None, data=None, vg_fun=None, stderr=True, optim=adam,
     batch_size=8192, backend='cpu', **kwargs
 ):
     # compute gradient for optim
