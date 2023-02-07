@@ -6,7 +6,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'fastreg'
-version = '1.1'
+version = '1.2'
 description = 'Fast sparse regressions'
 readme = { file = 'README.md' , content-type = 'text/markdown' }
 authors = [{ name = 'Doug Hanley', email = 'thesecretaryofwar@gmail.com' }]
@@ -21,7 +21,7 @@ dependencies = ['numpy', 'scipy', 'pandas']
 requires-python = '>=3.7'
 
 [project.optional-dependencies]
-glm = ['jax', 'jaxlib']
+glm = ['jax', 'jaxlib', 'optax']
 
 [project.urls]
 Homepage = 'http://github.com/iamlemec/fastreg'
