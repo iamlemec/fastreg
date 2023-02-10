@@ -57,6 +57,7 @@ losses = {
     'normal': lambda p, d, yh, y: normal_loss(p, yh, y),
     'lognorm': lambda p, d, yh, y: normal_loss(p, yh, log(y)),
     'lstsq': lambda p, d, yh, y: lstsq_loss(yh, y),
+    'loglstsq': lambda p, d, yh, y: lstsq_loss(yh, log(y)),
 }
 
 def ensure_loss(s):
@@ -249,20 +250,20 @@ def flatten_output(beta, sigma):
 ##
 
 # figure out burn-in - cosine decay
-def lr_schedule(eta, epochs, eta_boost=10.0, eta_burn=0.15):
-    eta_burn = int(eta_burn*epochs) if type(eta_burn) is float else eta_burn
+def lr_schedule(eta, epochs, boost=10.0, burn=0.15):
+    burn = int(burn*epochs) if type(burn) is float else burn
     def get_lr(ep):
-        decay = np.clip(ep/eta_burn, 0, 1)
+        decay = np.clip(ep/burn, 0, 1)
         coeff = 0.5*(1.0+np.cos(np.pi*decay))
-        return eta*(1+coeff*(eta_boost-1))
+        return eta*(1+coeff*(boost-1))
     return get_lr
 
 # adam optimizer with initial boost + cosine decay
 def adam(
     vg_fun, loader, params0, epochs=10, eta=0.005, beta1=0.9, beta2=0.99, eps=1e-8,
-    xtol=1e-4, ftol=1e-5, eta_boost=10.0, eta_burn=0.15, disp=None
+    xtol=1e-4, ftol=1e-5, boost=10.0, burn=0.4, disp=None
 ):
-    get_lr = lr_schedule(eta, epochs, eta_boost=eta_boost, eta_burn=eta_burn)
+    get_lr = lr_schedule(eta, epochs, boost=boost, burn=burn)
 
     # parameter info
     params = tree_map(np.array, params0)
@@ -339,7 +340,7 @@ def adam(
     return params
 
 # adam optimizer with cosine burn in
-def adam_cosine(learn=1e-2, boost=5.0, burn=0.2, epochs=None, **kwargs):
+def adam_cosine(learn=1e-2, boost=5.0, burn=0.3, epochs=None, **kwargs):
     burn = int(burn*epochs) if type(burn) is float else burn
     schedule = optax.cosine_decay_schedule(boost*learn, burn, alpha=1/boost)
     return optax.chain(
@@ -423,7 +424,7 @@ def optax_wrap(
 
 # maximum likelihood using jax - this expects a mean log likelihood
 def maxlike(
-    model=None, params=None, data=None, stderr=False, optim=adam, batch_size=8192,
+    model=None, params=None, data=None, stderr=False, optim=adam, batch_size=32768,
     backend='cpu', **kwargs
 ):
     # get model gradients
@@ -454,7 +455,7 @@ def maxlike(
 # a toplevel hdfe variable is treated special-like in diag_fisher
 def maxlike_panel(
     model=None, params=None, data=None, vg_fun=None, stderr=True, optim=adam,
-    batch_size=8192, backend='cpu', **kwargs
+    batch_size=32768, backend='cpu', **kwargs
 ):
     # compute gradient for optim
     vg_fun = jax.jit(jax.value_and_grad(model), backend=backend)
