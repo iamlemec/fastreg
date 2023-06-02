@@ -128,7 +128,7 @@ You can also pass a term to the `absorb` flag to absorb those variables a la Sta
 
 ### Generalized linear models
 
-We can do GLM now too! The syntax and usage is identical to that of `ols`. For instance, to run a properly specified Poisson regression using our test data:
+We can do GLM now too! Note that you must install `jax` to use these routines, otherwise they will not show up in `fastreg` module. The syntax and usage is identical to that of `ols`. For instance, to run a properly specified Poisson regression using our test data:
 
 ``` python
 fr.poisson(y=R.p, x=I+R.x1+R.x2+C.id1+C.id2, data=data)
@@ -149,7 +149,7 @@ You can use the `hdfe` flag here as well, for instance:
 fr.poisson(y=R.p, x=I+R.x1+R.x2+C.id1, hdfe=C.id2, data=data)
 ```
 
-Under the hood, this is all powered by a maximum likelihood estimation routine in `general.py` called `maxlike_panel`. Just give this a function that computes the mean log likelihood and it'll take care of the rest, computing standard errors from the inverse of the Fisher information matrix. This is then specialized into a generalized linear model routine called `glm`, which accepts a loss function along with data. I've provided implementations for `logit`, `poisson`, `negbin`, `zinf_poisson`, `zinf_negbin`, and `gols`.
+Under the hood, this is all powered by a maximum likelihood estimation routine in `general.py` called `maxlike_panel`. Just give this a function that computes the mean log likelihood and it'll take care of the rest, computing standard errors from the inverse of the Fisher information matrix. This is then specialized into a generalized linear model routine called `glm`, which accepts a loss function along with data. I've provided implementations for `logit`, `poisson`, `negbin`, `poisson_zinf`, `negbin_zinf`, and `gols`.
 
 ### Custom factors
 
