@@ -30,7 +30,7 @@ Alternatively, you can clone this repository locally and run
 pip install -e .
 ```
 
-Optionally, for the maximum likelihood routines, you'll need `jax` (and `jaxlib`) as well. See [here](https://github.com/google/jax) for detailed instructions.
+Optionally, for the maximum likelihood routines, you'll need `jax` and `optax` as well. See [here](https://github.com/google/jax) for detailed instructions.
 
 ### Usage
 
@@ -128,7 +128,7 @@ You can also pass a term to the `absorb` flag to absorb those variables a la Sta
 
 ### Generalized linear models
 
-We can do GLM now too! Note that you must install `jax` to use these routines, otherwise they will not show up in `fastreg` module. The syntax and usage is identical to that of `ols`. For instance, to run a properly specified Poisson regression using our test data:
+We can do GLM now too! Note that you must install `jax` and `optax` to use these routines, otherwise they will not show up in `fastreg` module. The syntax and usage is identical to that of `ols`. For instance, to run a properly specified Poisson regression using our test data:
 
 ``` python
 fr.poisson(y=R.p, x=I+R.x1+R.x2+C.id1+C.id2, data=data)
